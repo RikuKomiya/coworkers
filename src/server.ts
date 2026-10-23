@@ -1,6 +1,6 @@
 import handler from "@tanstack/react-start/server-entry"
 import { getAgentByName, routeAgentEmail, routeAgentRequest } from "agents"
-import { userIdFromRequest } from "@/lib/auth"
+import { Unauthorized, identify } from "@/lib/auth"
 import { botInstanceName } from "@/lib/types"
 import { handleAppRequest } from "./agents/apps-runtime"
 import type { UserHub } from "./agents/user-hub"
@@ -35,7 +35,15 @@ export default {
 
     const target = agentInstance(new URL(request.url).pathname)
     if (target) {
-      const userId = userIdFromRequest(request)
+      let userId: string
+      try {
+        userId = (await identify(request)).id
+      } catch (err) {
+        if (err instanceof Unauthorized) {
+          return new Response("Unauthorized", { status: 401 })
+        }
+        throw err
+      }
       if (!ownsInstance(userId, target.agent, target.instance)) {
         return new Response("Forbidden", { status: 403 })
       }

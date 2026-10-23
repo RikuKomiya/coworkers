@@ -1,6 +1,23 @@
+import { existsSync, readFileSync } from "node:fs"
 import { bindings, defineConfig, exports } from "cf/config"
 
-const WORKER_NAME = "bdots"
+/**
+ * Your deployment's own values, written by `pnpm run setup` (scripts/setup.ts)
+ * and kept out of git. Anything it leaves out uses the defaults below.
+ */
+const deploy: Partial<{
+  name: string
+  model: string
+  gateway: string
+  accessTeamDomain: string
+  accessAud: string
+}> =
+  // The installer packs a release for everyone: never with your values.
+  !process.env.BDOTS_PACKING && existsSync("bdots.deploy.json")
+    ? JSON.parse(readFileSync("bdots.deploy.json", "utf8"))
+    : {}
+
+const WORKER_NAME = deploy.name ?? "bdots"
 
 /**
  * Cloudflare project config, read by the `cf` CLI and the Cloudflare Vite
@@ -13,15 +30,17 @@ export default defineConfig({
   worker: {
     name: WORKER_NAME,
     compatibilityDate: "2026-09-01",
-    // `experimental` is required by the @cloudflare/computer worker-shell
-    // backend (just-bash in a Dynamic Worker).
-    compatibilityFlags: ["nodejs_compat", "experimental"],
+    // No `experimental`: Cloudflare refuses to deploy Workers that set it
+    // (error 10021), though @cloudflare/computer's README asks for it.
+    compatibilityFlags: ["nodejs_compat"],
     // Custom entry (not "@tanstack/react-start/server-entry") so the Worker
     // can export Durable Object classes and route /agents/* first.
     entrypoint: "./src/server.ts",
     observability: {
       enabled: true,
     },
+    // Per-version preview hostnames are not covered by the Access app.
+    previewUrls: false,
     exports: {
       // One per user: bot directory, connections, cross-bot routing.
       UserHub: exports.durableObject({ storage: "sqlite" }),
@@ -59,20 +78,29 @@ export default defineConfig({
         worker: WORKER_NAME,
         exportName: "AppLive",
       }),
-      // Main chat model. A "@cf/..." id hits Workers AI; a
-      // "<provider>/<model>" slug is routed through AI Gateway.
-      // Agentic browser work needs a strong model: a small one tends to loop
-      // on a failing approach instead of switching or asking. For example
-      // "anthropic/claude-sonnet-5-5" or "openai/<model>" (AI Gateway with
-      // Unified Billing or stored provider keys).
-      MODEL: bindings.text("@cf/deepseek-ai/deepseek-v4.1-flash-1017"),
+      // Deployment default chat model. Users pick others (Workers AI,
+      // Anthropic, OpenAI, Google, xAI) on the Models page and per bot;
+      // those choices live on the UserHub. A "@cf/..." id runs on Workers
+      // AI; a "<provider>/<model>" catalog id is billed with AI Gateway
+      // Unified Billing credits or a provider key stored on the gateway.
+      MODEL: bindings.text(
+        deploy.model ?? "@cf/deepseek-ai/deepseek-v4.1-flash-1017"
+      ),
+      // Workers AI model a turn retries on when a third-party model fails.
+      FALLBACK_MODEL: bindings.text("@cf/deepseek-ai/deepseek-v4.1-flash-1017"),
       // Optional model for background turns (routines, check-ins, email).
-      // Empty uses MODEL. Lets a cheap model run scheduled work while chat
-      // uses a strong one.
+      // Empty uses the chat model.
       BACKGROUND_MODEL: bindings.text(""),
-      // Optional AI Gateway id. When set, Workers AI calls go through it
-      // too (logs, caching, spend limits).
-      AI_GATEWAY_ID: bindings.text(""),
+      // AI Gateway every model call goes through (logs, analytics, caching,
+      // rate and spend limits). Empty uses "default", which Cloudflare
+      // creates on first use.
+      AI_GATEWAY_ID: bindings.text(deploy.gateway ?? ""),
+      // Cloudflare Access in front of the Worker. When both are set, every
+      // request must carry a valid Access JWT for this application; without
+      // them everyone is the "demo" user. ACCESS_TEAM_DOMAIN is
+      // "<team>.cloudflareaccess.com", ACCESS_AUD the application's AUD tag.
+      ACCESS_TEAM_DOMAIN: bindings.text(deploy.accessTeamDomain ?? ""),
+      ACCESS_AUD: bindings.text(deploy.accessAud ?? ""),
       // Domain with Email Routing that forwards to this Worker (catch-all
       // or one rule per bot). Each bot gets <user>.<bot>@EMAIL_DOMAIN.
       // Empty turns inbound email off.

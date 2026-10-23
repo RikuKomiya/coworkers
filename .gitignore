@@ -17,3 +17,9 @@ todos.json
 .dev.vars*
 !.dev.vars.example
 !.env.example
+
+# Release copied into the installer by installer/scripts/pack-release.ts
+installer/public/release
+
+# Your deployment's values, written by pnpm run setup
+bdots.deploy.json

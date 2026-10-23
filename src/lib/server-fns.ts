@@ -2,7 +2,7 @@ import { createServerFn } from "@tanstack/react-start"
 import { getRequest } from "@tanstack/react-start/server"
 import { getAgentByName } from "agents"
 import { env } from "cloudflare:workers"
-import { DEMO_USER_ID, userIdFromRequest } from "@/lib/auth"
+import { DEMO_USER_ID, identify } from "@/lib/auth"
 import { SIDEBAR_COOKIE, parseWidths } from "@/lib/layout-context"
 import type { PanelWidths } from "@/lib/layout-context"
 import { botInstanceName } from "@/lib/types"
@@ -23,9 +23,8 @@ const DEMO_VIEWER = {
   avatarUrl: "https://github.com/fayazara.png",
 }
 
-function viewerFromRequest(request: Request): Viewer {
-  const id = userIdFromRequest(request)
-  const email = request.headers.get("Cf-Access-Authenticated-User-Email")
+async function viewerFromRequest(request: Request): Promise<Viewer> {
+  const { id, email } = await identify(request)
   if (id === DEMO_USER_ID) return { id, ...DEMO_VIEWER }
   return { id, label: email ?? id }
 }
@@ -42,7 +41,7 @@ export const getHubSnapshot = createServerFn().handler(
     widths: PanelWidths
   }> => {
     const request = getRequest()
-    const viewer = viewerFromRequest(request)
+    const viewer = await viewerFromRequest(request)
     const cookie = request.headers.get("Cookie") ?? ""
     const sidebarOpen = !cookie.includes(`${SIDEBAR_COOKIE}=closed`)
     const hub = await getAgentByName(
@@ -68,7 +67,7 @@ export interface BotSnapshot {
 export const getBotSnapshot = createServerFn()
   .validator((botId: string) => botId)
   .handler(async ({ data: botId }): Promise<BotSnapshot | null> => {
-    const viewer = viewerFromRequest(getRequest())
+    const viewer = await viewerFromRequest(getRequest())
     const hub = await getAgentByName(
       env.UserHub as unknown as DurableObjectNamespace<UserHub>,
       viewer.id

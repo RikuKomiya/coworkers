@@ -15,6 +15,7 @@ Durable Object with its own chat, memory, routines, computer and browser.
 | Worker entry  | `src/server.ts`                                                              | Auth-checks and routes `/agents/*`, then hands off to TanStack Start. Exports the Durable Object classes.                                                           |
 | `UserHub`     | `src/agents/user-hub.ts`                                                     | One per user. Bot directory (sidebar), bot-to-bot relay, and every MCP connection (one sign-in per user; bots call tools through `appCatalog()` / `callAppTool()`). |
 | `BotAgent`    | `src/agents/bot-agent.ts`                                                    | One per bot (`<userId>:<botId>`). Extends `Think`. Tools, rules, routines, computer, browser. Holds no MCP connections of its own.                                  |
+| Models        | `src/lib/models.ts`, `src/agents/models.ts`                                  | Model catalog (shared) and the AI Gateway model factory. Account choice on `UserHub`, per-bot override in `BotState.model`, Workers AI fallback.                         |
 | System prompt | `src/agents/prompt.ts`                                                       | Stable "soul" plus per-turn context.                                                                                                                                |
 | Shared types  | `src/lib/types.ts`                                                           | Imported by both the agents and the client. No server-only imports.                                                                                                 |
 | First paint   | `src/lib/server-fns.ts`                                                      | Server functions that read a snapshot over DO RPC.                                                                                                                  |
@@ -33,8 +34,9 @@ Things that will bite you:
   (connection header values live in a SQL table on the `UserHub`).
 - **WebSocket hooks cannot run during SSR.** Keep `useAgent` and
   `useAgentChat` under `ClientOnly`, with a loader-fed fallback.
-- **The `experimental` compatibility flag is required** by the
-  `@cloudflare/computer` worker-shell backend.
+- **Never add the `experimental` compatibility flag.** `@cloudflare/computer`'s
+  README asks for it, but Cloudflare rejects any deploy that sets it
+  (error 10021), so nobody could deploy bdots.
 - **`cf dev` needs a Cloudflare login** because `AI` and `BROWSER` are
   remote-only bindings. The dev server uses Wrangler's login
   (`npx wrangler login`), which can differ from `cf auth login`.
