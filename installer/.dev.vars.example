@@ -1,0 +1,3 @@
+# Copy to .dev.vars. `pnpm dev:demo` needs only SESSION_SECRET.
+SESSION_SECRET=any-long-random-string
+CF_OAUTH_CLIENT_SECRET=

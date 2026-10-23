@@ -1,3 +1,7 @@
+packages:
+  - "."
+  - "installer"
+
 onlyBuiltDependencies:
   - esbuild
   - msw

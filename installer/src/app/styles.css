@@ -1,0 +1,169 @@
+@source "../../node_modules/@cloudflare/kumo/dist/**/*.{js,jsx,ts,tsx}";
+@import "@cloudflare/kumo/styles/tailwind";
+@import "tailwindcss";
+
+@custom-variant dark (&:where([data-mode="dark"], [data-mode="dark"] *));
+
+@theme {
+  --font-mono:
+    "Berkeley Mono", ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+}
+
+@layer base {
+  button:not(:disabled),
+  [role="option"],
+  label[for] {
+    cursor: pointer;
+  }
+
+  html {
+    font-family:
+      system-ui,
+      -apple-system,
+      "Segoe UI",
+      Roboto,
+      sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  html,
+  body,
+  #root {
+    min-height: 100%;
+  }
+
+  body {
+    background: var(--color-kumo-canvas);
+  }
+}
+
+:root {
+  --color-kumo-line: light-dark(oklch(0% 0 0 / 0.06), oklch(100% 0 0 / 0.08));
+  --fill-hover: light-dark(oklch(0% 0 0 / 0.045), oklch(100% 0 0 / 0.07));
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-bounce: cubic-bezier(0.34, 1.36, 0.64, 1);
+}
+
+.hi [stroke-width] {
+  stroke-width: 1.5px;
+  vector-effect: non-scaling-stroke;
+}
+
+.btn-ink {
+  --color-kumo-brand: var(--color-kumo-contrast);
+}
+
+.pressable {
+  transition:
+    transform 160ms ease-out,
+    background-color 150ms ease,
+    color 150ms ease;
+}
+
+.pressable:active {
+  transform: scale(0.97);
+}
+
+/* Screens slide up into place when the phase changes. */
+.screen-in {
+  animation: screen-in 480ms var(--ease-out) both;
+}
+
+@keyframes screen-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+    filter: blur(4px);
+  }
+}
+
+/* Children appear one after another. */
+.stagger > * {
+  animation: screen-in 520ms var(--ease-out) both;
+}
+.stagger > *:nth-child(2) {
+  animation-delay: 60ms;
+}
+.stagger > *:nth-child(3) {
+  animation-delay: 120ms;
+}
+.stagger > *:nth-child(4) {
+  animation-delay: 180ms;
+}
+.stagger > *:nth-child(5) {
+  animation-delay: 240ms;
+}
+.stagger > *:nth-child(6) {
+  animation-delay: 300ms;
+}
+.stagger > *:nth-child(7) {
+  animation-delay: 360ms;
+}
+
+/* A head that just finished its part hops once. */
+.part[data-status="done"] .part-head {
+  animation: part-done 560ms var(--ease-bounce);
+}
+
+@keyframes part-done {
+  40% {
+    transform: translateY(-10px) scale(1.06);
+  }
+}
+
+.part[data-status="pending"] .part-head {
+  opacity: 0.55;
+  filter: saturate(0.2);
+}
+
+.part-head {
+  transition:
+    opacity 400ms var(--ease-out),
+    filter 400ms var(--ease-out);
+}
+
+/* The headline swaps with a short blur as steps change. */
+.swap {
+  animation: swap 360ms var(--ease-out) both;
+}
+
+@keyframes swap {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+    filter: blur(3px);
+  }
+}
+
+/* Confetti of tiny robot-coloured dots on the done screen. */
+.confetti {
+  position: absolute;
+  top: 40%;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  animation: confetti 1400ms var(--ease-out) both;
+}
+
+@keyframes confetti {
+  from {
+    transform: translate(-50%, 0) rotate(0);
+    opacity: 1;
+  }
+  to {
+    transform: translate(calc(-50% + var(--x)), var(--y)) rotate(var(--r));
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .screen-in,
+  .stagger > *,
+  .swap,
+  .confetti,
+  .part[data-status="done"] .part-head {
+    animation: none;
+  }
+}

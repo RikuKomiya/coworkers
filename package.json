@@ -8,6 +8,7 @@
     "preview": "cf build && vite preview",
     "test": "vitest run",
     "deploy": "cf deploy",
+    "setup": "node scripts/setup.ts",
     "cf-typegen": "cf workers types",
     "db:generate": "drizzle-kit generate",
     "lint": "eslint",

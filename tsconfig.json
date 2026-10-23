@@ -7,6 +7,7 @@
     "prettier.config.js",
     "vite.config.js"
   ],
+  "exclude": ["node_modules", "installer"],
 
   "compilerOptions": {
     "target": "ES2022",

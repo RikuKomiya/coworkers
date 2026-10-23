@@ -167,33 +167,140 @@ Then open http://localhost:3000.
 
 ## Deploy
 
+You need a Cloudflare account on the **Workers Paid** plan (Browser Run and
+Dynamic Workers require it).
+
+### Option A: the installer
+
+Sign in with Cloudflare, pick a name, who can sign in and a model, and the
+installer builds bdots into your account: the Worker, an AI Gateway, and
+Cloudflare Access in front. Re-running it with the same name updates bdots
+and keeps your bots. How it works and how to host it: [`installer/`](installer/README.md).
+
+### Option B: one command
+
 ```bash
+git clone https://github.com/fayazara/bdots && cd bdots
+pnpm install
 cf auth login
+pnpm run setup
+```
+
+`scripts/setup.ts` asks for the account, a name, who can sign in and a model,
+then does what the installer does with the `cf` CLI:
+
+1. creates the AI Gateway and Web Push keys
+2. deploys once with Access required but not yet set up, so the new URL
+   refuses every request instead of being open
+3. sets up Cloudflare Access: your allow list, plus a bypass for shared app
+   links (`/apps`) and webhooks (`/api/hooks`), which carry their own tokens
+4. deploys again with the Access application's AUD
+
+Your choices go in `bdots.deploy.json` and secrets in `.dev.vars.production`.
+Both are git-ignored. **To update later:** `git pull`, then `pnpm run setup`
+again. It remembers your answers, and bots and their data are kept.
+
+Use `pnpm run setup`, not `pnpm setup` (a pnpm built-in). Add `-- --yes` to
+skip the questions and reuse your saved answers, e.g. in CI.
+
+<details>
+<summary><strong>Option C: every step by hand</strong></summary>
+
+The same result with the dashboard and `cf`, if you want to see each piece.
+With more than one account, prefix `cf` commands with
+`CLOUDFLARE_ACCOUNT_ID=<id>`.
+
+**1. Create the AI Gateway**
+
+```bash
+cf ai-gateway gateways create --id bdots --authentication --collect-logs \
+  --cache-invalidate-on-update --cache-ttl 0 \
+  --rate-limiting-interval 0 --rate-limiting-limit 0
+```
+
+**2. Write `bdots.deploy.json`** in the repo root. Leaving out the Access
+values deploys bdots open to everyone as the `demo` user, so start with
+placeholders that lock it:
+
+```json
+{
+  "name": "bdots",
+  "gateway": "bdots",
+  "accessTeamDomain": "locked.invalid",
+  "accessAud": "locked"
+}
+```
+
+**3. Secrets and the first deploy**
+
+```bash
+npx web-push generate-vapid-keys
+cp .dev.vars.example .dev.vars.production   # paste both keys in
+pnpm run deploy --secrets-file .dev.vars.production
+```
+
+Note the `https://<name>.<subdomain>.workers.dev` URL it prints. It answers
+401 for now.
+
+**4. Cloudflare Access.** In [Zero Trust](https://one.dash.cloudflare.com/)
+(the free plan is enough):
+
+1. **Access → Policies → Add a policy:** action **Allow**, include
+   **Emails** for everyone who should get in.
+2. **Add another policy:** action **Bypass**, include **Everyone**.
+3. **Access → Applications → Add → Self-hosted:** public hostname = your
+   bdots host, no path, with the Allow policy. Use a public hostname, not a
+   Worker destination: Worker destinations refuse WebSocket upgrades.
+4. **Add a second self-hosted application:** your host with path `apps`, and
+   your host with path `api/hooks`, with the Bypass policy.
+5. Copy the first application's **Application Audience (AUD) Tag** from its
+   overview. Your team domain is on Zero Trust's **Settings** page.
+
+**5. Unlock and deploy again.** Put the real values in `bdots.deploy.json`:
+
+```json
+  "accessTeamDomain": "<team>.cloudflareaccess.com",
+  "accessAud": "<aud tag>"
 ```
 
 ```bash
-pnpm run deploy
+pnpm run deploy --secrets-file .dev.vars.production
 ```
 
-> [!WARNING]
-> Without Cloudflare Access in front, every visitor is the same `demo` user.
-> Put the Worker behind Access before sharing it. Add a bypass for
-> `/api/hooks/*` and `/apps/*`, because those use a token in the URL. See
-> `src/lib/auth.ts`.
+</details>
+
+Either way, bdots then checks the Access token on every request and answers
+401 without a valid one, so it stays closed even if Access is turned off by
+mistake. Each email gets its own bots.
+
+### After deploying: models
+
+Open **Models** (the brain icon at the bottom of the sidebar). Workers AI
+models need nothing more. For Anthropic, OpenAI, Google or xAI, add
+[Unified Billing](https://developers.cloudflare.com/ai-gateway/features/unified-billing/)
+credits or your own provider key to the gateway, then press **Test**.
 
 ## Configuration
 
-Set in `cloudflare.config.ts`. Only `MODEL` matters to get started.
+Set in `cloudflare.config.ts`. Everything has a working default.
+`bdots.deploy.json`, if present, overrides the name, `MODEL`,
+`AI_GATEWAY_ID` and the two `ACCESS_*` values.
 
-| Setting                  | What it does                                                         |
-| ------------------------ | -------------------------------------------------------------------- |
-| `MODEL`                  | Chat model. `@cf/...` = Workers AI. `provider/model` = AI Gateway     |
-| `BACKGROUND_MODEL`       | Model for background turns. Empty = same as `MODEL`                  |
-| `AI_GATEWAY_ID`          | Route Workers AI through a gateway too (logs, spend limits)          |
-| `QUICK_ACTION_ENGINE`    | `kitesurf` (cheaper) or `chromium` for quick page reads               |
-| `EMAIL_DOMAIN`           | Turns on inbound email. Each bot gets `<user>.<bot>@<domain>`        |
-| `BROWSER_RUN_ACCOUNT_ID` | With `BROWSER_RUN_API_TOKEN` (secret), turns on the crawl tool       |
-| `VAPID_*`                | Push notification keys (`npx web-push generate-vapid-keys`)          |
+| Setting                  | What it does                                                          |
+| ------------------------ | --------------------------------------------------------------------- |
+| `MODEL`                  | Default chat model. `@cf/...` = Workers AI, `provider/model` = catalog |
+| `BACKGROUND_MODEL`       | Model for routines, check-ins and email. Empty = the chat model        |
+| `FALLBACK_MODEL`         | Workers AI model a turn retries on when a third-party model fails      |
+| `AI_GATEWAY_ID`          | Gateway for every model call. Empty = `default` (created on first use) |
+| `ACCESS_TEAM_DOMAIN`     | With `ACCESS_AUD`, require a valid Access token on every request       |
+| `ACCESS_AUD`             | The Access application's AUD tag                                       |
+| `QUICK_ACTION_ENGINE`    | `kitesurf` (cheaper) or `chromium` for quick page reads                |
+| `EMAIL_DOMAIN`           | Turns on inbound email. Each bot gets `<user>.<bot>@<domain>`         |
+| `BROWSER_RUN_ACCOUNT_ID` | With `BROWSER_RUN_API_TOKEN` (secret), turns on the crawl tool        |
+| `VAPID_*`                | Push notification keys (`npx web-push generate-vapid-keys`)           |
+
+The Models page overrides `MODEL` and `BACKGROUND_MODEL` for your account,
+and each bot can pick its own chat model in its settings.
 
 ## Project layout
 
@@ -211,11 +318,14 @@ src/
     secrets.ts        credentials the bot never sees
     guards.ts         stops runaway loops
     memory.ts         memory helpers
+    models.ts         model factory: AI Gateway, fallback, log metadata
   routes/
-    _app/             bot thread, computer + settings panels, connections
+    _app/             bot thread, computer + settings panels, connections, models
     api/hooks.*.ts    webhook endpoint
   components/         thread, Computer card, sidebar, panels
   lib/                shared types, server functions, React contexts
+installer/            "Deploy to Cloudflare" wizard (its own Worker)
+scripts/setup.ts      the same deploy, from your terminal with cf
 cloudflare.config.ts  Worker config and bindings
 product.md            full product spec
 AGENTS.md             read this first if you're an AI coding agent
@@ -227,6 +337,7 @@ AGENTS.md             read this first if you're an AI coding agent
 | ----------------- | --------------------------------------- |
 | `pnpm dev`        | Dev server on :3000, running on workerd |
 | `pnpm build`      | Production build                        |
+| `pnpm run setup`  | Deploy with AI Gateway + Access (asks)  |
 | `pnpm run deploy` | Build and deploy                        |
 | `pnpm test`       | Vitest                                  |
 | `pnpm typecheck`  | Regenerate binding types, then `tsc`    |
