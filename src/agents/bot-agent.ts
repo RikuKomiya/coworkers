@@ -28,11 +28,11 @@ import { CHAT_MESSAGE_TYPES } from "agents/chat"
 import type { ContextConfig } from "agents/context"
 import { isAutoReplyEmail } from "agents/email"
 import type { AgentEmail } from "agents/email"
-import { createAI } from "agents/models/ai-sdk"
-import type { AI, CloudflareLanguageModelId } from "agents/models/ai-sdk"
 import { jsonSchema, tool } from "ai"
 import type { JSONSchema7, ToolSet, UIMessage } from "ai"
 import PostalMime from "postal-mime"
+import { isModelId } from "@/lib/models"
+import type { ModelSettings } from "@/lib/models"
 import { z } from "zod"
 import {
   DEFAULT_PROACTIVE,
@@ -94,6 +94,7 @@ import type { TeachRecording, TeachSession } from "./teach"
 import type { UserHub } from "./user-hub"
 import { LoopGuard, shapeToolResults } from "./guards"
 import { MAX_MEMORY_CHARS, appendFact } from "./memory"
+import { languageModel, pickModel } from "./models"
 import {
   MAX_SECRET_RESPONSE_CHARS,
   SECRET_REQUEST_TIMEOUT_MS,
@@ -817,32 +818,33 @@ export class BotAgent extends Think<Env, BotState> {
 
   // ── Model and prompt ────────────────────────────────────────────────
 
+  /** The account's model choice, as of this bot's latest turn. */
+  #models?: ModelSettings
+
   override getModel() {
-    return this.resolveModelId(this.env.MODEL)
+    return this.modelFor(false)
   }
 
   /**
-   * Background turns (routines, check-ins, email) use BACKGROUND_MODEL when
-   * it is set, so a strong interactive model does not run up the bill on
+   * Background turns (routines, check-ins, email) can run on a cheaper model
+   * than chat, so a strong interactive model does not run up the bill on
    * every scheduled check.
    */
   private turnModel() {
-    const background = this.env.BACKGROUND_MODEL?.trim()
-    return background && this.isBackgroundTurn()
-      ? this.resolveModelId(background)
-      : this.getModel()
+    return this.modelFor(this.isBackgroundTurn())
   }
 
-  #ai?: AI
-
-  private resolveModelId(model: string) {
-    // One provider for "@cf/…" Workers AI ids, "<author>/<model>" catalog
-    // slugs and "dynamic/<route>" routes, through AI_GATEWAY_ID when set.
-    this.#ai ??= createAI({
-      binding: this.env.AI,
-      gateway: this.env.AI_GATEWAY_ID?.trim() || undefined,
+  private modelFor(background: boolean) {
+    const id = pickModel(this.env, this.#models, this.state.model, background)
+    return languageModel(this.env, id, {
+      settings: this.#models,
+      // Shown on each AI Gateway log entry.
+      metadata: {
+        bot: this.state.name,
+        botId: this.botId,
+        turn: background ? "background" : "chat",
+      },
     })
-    return this.#ai(model as CloudflareLanguageModelId)
   }
 
   override configureContext(): ContextConfig[] {
@@ -889,15 +891,19 @@ export class BotAgent extends Think<Env, BotState> {
     try {
       const hub = await this.hub()
       let origin: string | null
-      ;[others, catalog, origin, sharedMemory] = await Promise.all([
-        hub.listBots().then((bots) => bots.filter((b) => b.id !== this.botId)),
-        hub.appCatalog(),
-        hub.appOrigin(),
-        // In the per-turn context rather than a context block: it is fresh
-        // every turn, and a block's "remind" message breaks approval
-        // continuations (it lands after the approval response).
-        hub.sharedMemory(),
-      ])
+      ;[others, catalog, origin, sharedMemory, this.#models] =
+        await Promise.all([
+          hub
+            .listBots()
+            .then((bots) => bots.filter((b) => b.id !== this.botId)),
+          hub.appCatalog(),
+          hub.appOrigin(),
+          // In the per-turn context rather than a context block: it is fresh
+          // every turn, and a block's "remind" message breaks approval
+          // continuations (it lands after the approval response).
+          hub.sharedMemory(),
+          hub.modelSettings(),
+        ])
       this.#origin = origin ?? ""
     } catch (err) {
       console.error("Loading bots or apps failed", err)
@@ -3765,10 +3771,17 @@ export class BotAgent extends Think<Env, BotState> {
     name?: string
     role?: string
     rules?: Partial<Record<ActionClass, RulePolicy>>
+    /** Null goes back to the account's model. */
+    model?: string | null
   }) {
     const name = input.name?.trim()
+    const model = input.model?.trim() || null
+    if (model && !isModelId(model)) {
+      throw new Error(`"${model}" is not a model id.`)
+    }
     this.setState({
       ...this.state,
+      ...(input.model !== undefined ? { model } : {}),
       ...(name ? { name } : {}),
       ...(input.role !== undefined ? { role: input.role.trim() } : {}),
       ...(input.rules

@@ -11,7 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
-import { Route as AppConnectionsRouteImport } from './routes/_app/connections'
+import { Route as AppSettingsRouteImport } from './routes/_app/settings'
 import { Route as ApiHelloRouteImport } from './routes/api/hello'
 import { Route as AppBotsBotIdRouteImport } from './routes/_app/bots.$botId'
 import { Route as AppBotsBotIdComputerRouteImport } from './routes/_app/bots.$botId.computer'
@@ -27,9 +27,9 @@ const AppIndexRoute = AppIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AppRoute,
 } as any)
-const AppConnectionsRoute = AppConnectionsRouteImport.update({
-  id: '/connections',
-  path: '/connections',
+const AppSettingsRoute = AppSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
   getParentRoute: () => AppRoute,
 } as any)
 const ApiHelloRoute = ApiHelloRouteImport.update({
@@ -61,7 +61,7 @@ const ApiHooksUserIdBotIdTokenRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
-  '/connections': typeof AppConnectionsRoute
+  '/settings': typeof AppSettingsRoute
   '/api/hello': typeof ApiHelloRoute
   '/bots/$botId': typeof AppBotsBotIdRouteWithChildren
   '/bots/$botId/computer': typeof AppBotsBotIdComputerRoute
@@ -69,7 +69,7 @@ export interface FileRoutesByFullPath {
   '/api/hooks/$userId/$botId/$token': typeof ApiHooksUserIdBotIdTokenRoute
 }
 export interface FileRoutesByTo {
-  '/connections': typeof AppConnectionsRoute
+  '/settings': typeof AppSettingsRoute
   '/api/hello': typeof ApiHelloRoute
   '/': typeof AppIndexRoute
   '/bots/$botId': typeof AppBotsBotIdRouteWithChildren
@@ -80,7 +80,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_app': typeof AppRouteWithChildren
-  '/_app/connections': typeof AppConnectionsRoute
+  '/_app/settings': typeof AppSettingsRoute
   '/api/hello': typeof ApiHelloRoute
   '/_app/': typeof AppIndexRoute
   '/_app/bots/$botId': typeof AppBotsBotIdRouteWithChildren
@@ -92,7 +92,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/connections'
+    | '/settings'
     | '/api/hello'
     | '/bots/$botId'
     | '/bots/$botId/computer'
@@ -100,7 +100,7 @@ export interface FileRouteTypes {
     | '/api/hooks/$userId/$botId/$token'
   fileRoutesByTo: FileRoutesByTo
   to:
-    | '/connections'
+    | '/settings'
     | '/api/hello'
     | '/'
     | '/bots/$botId'
@@ -110,7 +110,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/_app'
-    | '/_app/connections'
+    | '/_app/settings'
     | '/api/hello'
     | '/_app/'
     | '/_app/bots/$botId'
@@ -141,11 +141,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppIndexRouteImport
       parentRoute: typeof AppRoute
     }
-    '/_app/connections': {
-      id: '/_app/connections'
-      path: '/connections'
-      fullPath: '/connections'
-      preLoaderRoute: typeof AppConnectionsRouteImport
+    '/_app/settings': {
+      id: '/_app/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof AppSettingsRouteImport
       parentRoute: typeof AppRoute
     }
     '/api/hello': {
@@ -201,13 +201,13 @@ const AppBotsBotIdRouteWithChildren = AppBotsBotIdRoute._addFileChildren(
 )
 
 interface AppRouteChildren {
-  AppConnectionsRoute: typeof AppConnectionsRoute
+  AppSettingsRoute: typeof AppSettingsRoute
   AppIndexRoute: typeof AppIndexRoute
   AppBotsBotIdRoute: typeof AppBotsBotIdRouteWithChildren
 }
 
 const AppRouteChildren: AppRouteChildren = {
-  AppConnectionsRoute: AppConnectionsRoute,
+  AppSettingsRoute: AppSettingsRoute,
   AppIndexRoute: AppIndexRoute,
   AppBotsBotIdRoute: AppBotsBotIdRouteWithChildren,
 }

@@ -1,26 +1,15 @@
 import { useEffect, useState } from "react"
-import { createFileRoute } from "@tanstack/react-router"
 import { Button } from "@cloudflare/kumo/components/button"
-import { Tooltip } from "@cloudflare/kumo/components/tooltip"
 import { EmptyRow, FIELD, Group, Row, RowAction } from "@/components/group"
 import {
   EyeIcon,
   PlugsConnectedIcon,
   PlusIcon,
-  SidebarSimpleIcon,
   TrashIcon,
 } from "@/components/icons"
 import { connectionStatus } from "@/lib/connection-status"
 import { useHub } from "@/lib/hub-context"
-import { useLayout } from "@/lib/layout-context"
 import type { Connection } from "@/lib/types"
-
-export const Route = createFileRoute("/_app/connections")({
-  // Set by the sign-in callback when an app's OAuth flow fails.
-  validateSearch: (search: Record<string, unknown>): { error?: string } =>
-    typeof search.error === "string" ? { error: search.error } : {},
-  component: Connections,
-})
 
 interface HeaderRow {
   key: number
@@ -331,11 +320,9 @@ function ConnectionRow({ connection }: { connection: Connection }) {
   )
 }
 
-function Connections() {
+export function ConnectionsSettings({ error }: { error?: string }) {
   const hub = useHub()
-  const { error } = Route.useSearch()
   const { live, refreshConnections } = hub
-  const { sidebarOpen, toggleSidebar } = useLayout()
 
   // Pick up a sign-in that just finished in this tab.
   useEffect(() => {
@@ -343,68 +330,45 @@ function Connections() {
   }, [live, refreshConnections])
 
   return (
-    <section className="flex min-w-0 flex-1 flex-col overflow-hidden">
-      <header className="col-header relative">
-        <Tooltip
-          content={sidebarOpen ? "Hide bots" : "Show bots"}
-          render={
-            <button
-              type="button"
-              onClick={toggleSidebar}
-              aria-label={sidebarOpen ? "Hide bots" : "Show bots"}
-              aria-pressed={!sidebarOpen}
-              className="icon-btn"
-            >
-              <SidebarSimpleIcon size={20} />
-            </button>
-          }
-        />
-        <h1 className="absolute left-1/2 -translate-x-1/2 text-[15px] font-medium text-kumo-default">
-          Connections
-        </h1>
-      </header>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-[640px] space-y-8 px-6 pt-6 pb-16">
-          <p className="px-1.5 text-sm text-pretty text-kumo-subtle">
-            Bots reach your apps through their APIs first and only open a
-            browser when there is no API. Connect an{" "}
-            <a
-              href="https://executor.sh/docs/hosted/cloudflare"
-              target="_blank"
-              rel="noreferrer noopener"
-              className="text-kumo-default underline decoration-kumo-line underline-offset-2 hover:decoration-current"
-            >
-              Executor
-            </a>{" "}
-            gateway for Gmail, Calendar, Sheets and the rest through one
-            endpoint, or add any MCP server directly.
-          </p>
+    <div className="space-y-8">
+      <p className="px-1.5 text-sm text-pretty text-kumo-subtle">
+        Bots reach your apps through their APIs first and only open a browser
+        when there is no API. Connect an{" "}
+        <a
+          href="https://executor.sh/docs/hosted/cloudflare"
+          target="_blank"
+          rel="noreferrer noopener"
+          className="text-kumo-default underline decoration-kumo-line underline-offset-2 hover:decoration-current"
+        >
+          Executor
+        </a>{" "}
+        gateway for Gmail, Calendar, Sheets and the rest through one endpoint,
+        or add any MCP server directly.
+      </p>
 
-          {error ? (
-            <p
-              role="alert"
-              className="rounded-2xl bg-kumo-danger-tint px-4 py-3 text-sm text-pretty text-kumo-danger"
-            >
-              Sign-in didn't finish: {error}
-            </p>
-          ) : null}
+      {error ? (
+        <p
+          role="alert"
+          className="rounded-2xl bg-kumo-danger-tint px-4 py-3 text-sm text-pretty text-kumo-danger"
+        >
+          Sign-in didn't finish: {error}
+        </p>
+      ) : null}
 
-          <Group
-            title="Your connections"
-            hint="Every bot can use every connection, and you only sign in once."
-          >
-            {hub.state.connections.length === 0 ? (
-              <EmptyRow>No connections yet</EmptyRow>
-            ) : (
-              hub.state.connections.map((connection) => (
-                <ConnectionRow key={connection.id} connection={connection} />
-              ))
-            )}
-          </Group>
+      <Group
+        title="Your connections"
+        hint="Every bot can use every connection, and you only sign in once."
+      >
+        {hub.state.connections.length === 0 ? (
+          <EmptyRow>No connections yet</EmptyRow>
+        ) : (
+          hub.state.connections.map((connection) => (
+            <ConnectionRow key={connection.id} connection={connection} />
+          ))
+        )}
+      </Group>
 
-          <AddConnection />
-        </div>
-      </div>
-    </section>
+      <AddConnection />
+    </div>
   )
 }

@@ -7,6 +7,7 @@ import { Loader } from "@cloudflare/kumo/components/loader"
 import { Select } from "@cloudflare/kumo/components/select"
 import { Switch } from "@cloudflare/kumo/components/switch"
 import { CopyButton } from "@/components/copy-button"
+import { ModelPicker } from "@/components/model-picker"
 import { RoutineCard } from "@/components/routine-card"
 import {
   EmptyRow,
@@ -134,6 +135,39 @@ function Identity() {
         }}
       />
     </div>
+  )
+}
+
+function Model() {
+  const { state, agent } = useBot()
+  const hub = useHub()
+  const account = hub.state.models?.chat ?? hub.state.deployment?.chat ?? ""
+  return (
+    <Group
+      title="Model"
+      hint={
+        <>
+          What this bot thinks with in chat. Background work uses the{" "}
+          <Link
+            to="/settings"
+            className="text-kumo-default underline decoration-kumo-line underline-offset-2 hover:decoration-current"
+          >
+            account's background model
+          </Link>
+          .
+        </>
+      }
+    >
+      <ModelPicker
+        value={state.model ?? null}
+        disabled={!agent}
+        inherit={{
+          label: "Account default",
+          modelId: account,
+        }}
+        onChange={(model) => void agent?.stub.updateSettings({ model })}
+      />
+    </Group>
   )
 }
 
@@ -407,7 +441,8 @@ function Toolkit() {
       ))}
       <li className="border-t border-kumo-line first:border-t-0">
         <Link
-          to="/connections"
+          to="/settings"
+          search={{ tab: "connections" }}
           className="flex min-h-14 items-center justify-between gap-4 py-3 pr-5 pl-4 text-sm text-kumo-default outline-none hover:bg-(--fill-hover) focus-visible:bg-(--fill-hover)"
         >
           {hub.state.connections.length === 0
@@ -891,6 +926,7 @@ export function SettingsPanel() {
   return (
     <div className="min-h-0 flex-1 space-y-8 overflow-y-auto px-4 pt-2 pb-6">
       <Identity />
+      <Model />
       <OnItsOwn />
       <OpenItems />
       <Rules />

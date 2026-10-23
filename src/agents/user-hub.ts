@@ -1,6 +1,9 @@
 import { Agent, callable, getAgentByName } from "agents"
 import type { Connection as AgentConnection, ConnectionContext } from "agents"
+import { generateText } from "ai"
 import webpush from "web-push"
+import { DEFAULT_MODEL_SETTINGS, isModelId } from "@/lib/models"
+import type { ModelSettings, ModelTestResult } from "@/lib/models"
 import { BOT_AVATARS, NEW_BOT_NAME, botInstanceName } from "@/lib/types"
 import type {
   AppCatalog,
@@ -13,6 +16,7 @@ import type {
 } from "@/lib/types"
 import type { BotAgent } from "./bot-agent"
 import { MAX_MEMORY_CHARS, appendFact } from "./memory"
+import { deploymentModels, languageModel } from "./models"
 
 const READ_VERBS =
   /(^|[_\-.])(get|list|search|read|fetch|find|query|lookup|describe|view|show|count)([_\-.]|$)/i
@@ -53,6 +57,12 @@ export class UserHub extends Agent<Env, HubState> {
       data TEXT NOT NULL,
       created_at INTEGER NOT NULL
     )`
+    // The deployment's MODEL or gateway may have changed since last start.
+    this.setState({
+      ...this.state,
+      models: { ...DEFAULT_MODEL_SETTINGS, ...this.state.models },
+      deployment: deploymentModels(this.env),
+    })
     // Memory every bot of this user reads, with its edit history.
     this.sql`CREATE TABLE IF NOT EXISTS shared_memory (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -66,10 +76,10 @@ export class UserHub extends Agent<Env, HubState> {
         this.syncConnectionStatus()
         const query = result.authSuccess
           ? ""
-          : `?error=${encodeURIComponent(result.authError)}`
+          : `&error=${encodeURIComponent(result.authError)}`
         return new Response(null, {
           status: 302,
-          headers: { Location: `/connections${query}` },
+          headers: { Location: `/settings?tab=connections${query}` },
         })
       },
     })
@@ -403,6 +413,70 @@ export class UserHub extends Agent<Env, HubState> {
       ...patch,
       ...(touched ? { updatedAt: Date.now() } : {}),
     })
+  }
+
+  // ── Models ──────────────────────────────────────────────────────────
+
+  /** Durable Object RPC: what a bot's next turn runs on. */
+  async modelSettings(): Promise<ModelSettings> {
+    return { ...DEFAULT_MODEL_SETTINGS, ...this.state.models }
+  }
+
+  @callable()
+  setModels(patch: Partial<ModelSettings>) {
+    const next = { ...DEFAULT_MODEL_SETTINGS, ...this.state.models }
+    for (const key of ["chat", "background"] as const) {
+      const value = patch[key]
+      if (value === undefined) continue
+      const id = value?.trim() || null
+      if (id && !isModelId(id)) throw new Error(`"${id}" is not a model id.`)
+      next[key] = id
+    }
+    if (patch.fallback !== undefined) next.fallback = !!patch.fallback
+    this.setState({ ...this.state, models: next })
+  }
+
+  /**
+   * One short call through the gateway, without the fallback, so the
+   * Models page can say whether a model actually works before bots use it.
+   */
+  @callable()
+  async testModel(modelId: string): Promise<ModelTestResult> {
+    const started = Date.now()
+    try {
+      if (!isModelId(modelId)) throw new Error("That is not a model id.")
+      const result = await generateText({
+        model: languageModel(this.env, modelId, {
+          settings: { ...DEFAULT_MODEL_SETTINGS, fallback: false },
+          metadata: { source: "model-test" },
+        }),
+        prompt:
+          "Say hello to the person setting you up, in one short, warm sentence. No preamble.",
+        maxOutputTokens: 400,
+      })
+      const meta = result.providerMetadata?.cloudflare as
+        { logId?: string } | undefined
+      return {
+        ok: true,
+        ms: Date.now() - started,
+        reply: result.text.trim().slice(0, 300) || "(empty reply)",
+        logId: meta?.logId,
+      }
+    } catch (err) {
+      const code =
+        err && typeof err === "object" && "code" in err
+          ? String(err.code)
+          : "unknown"
+      return {
+        ok: false,
+        ms: Date.now() - started,
+        code,
+        message: (err instanceof Error ? err.message : String(err)).slice(
+          0,
+          400
+        ),
+      }
+    }
   }
 
   // ── Shared memory ───────────────────────────────────────────────────

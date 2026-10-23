@@ -256,13 +256,9 @@ export function Sidebar() {
         <div className="flex items-center gap-1">
           <NotificationsButton />
           <Tooltip
-            content="Connections"
+            content="Settings"
             render={
-              <Link
-                to="/connections"
-                aria-label="Connections"
-                className="icon-btn"
-              >
+              <Link to="/settings" aria-label="Settings" className="icon-btn">
                 <GearSixIcon size={20} />
               </Link>
             }

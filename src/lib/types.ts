@@ -4,6 +4,7 @@
  */
 
 import type { RobotHeadShape } from "robot-heads"
+import type { DeploymentModels, ModelSettings } from "./models"
 
 export type BotStatus = "idle" | "thinking" | "working" | "action_needed"
 
@@ -86,6 +87,10 @@ export interface AppCatalog {
 export interface HubState {
   bots: BotSummary[]
   connections: Connection[]
+  /** Account-wide model choice. Absent on hubs created before models were configurable. */
+  models?: ModelSettings
+  /** The deployment's own models and gateway, refreshed on every start. */
+  deployment?: DeploymentModels
 }
 
 export type RulePolicy = "allow" | "ask" | "block"
@@ -250,6 +255,8 @@ export interface BotState {
   proactive: ProactiveSettings
   skills: Skill[]
   apps: BotAppSummary[]
+  /** This bot's own chat model. Null or absent uses the account's. */
+  model?: string | null
   /** Last time the bot finished background work, for the settings panel. */
   lastCheckIn?: number
 }

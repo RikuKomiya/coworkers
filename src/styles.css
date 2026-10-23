@@ -793,3 +793,29 @@
     cursor: pointer;
   }
 }
+
+/* Models page: a test reply lands like a message bubble. */
+.model-test-result {
+  background: var(--fill-hover);
+  transform-origin: top left;
+  animation: model-test-in 320ms var(--ease-smooth-out) both;
+}
+
+.model-test-result[data-ok="false"] {
+  background: var(--color-kumo-danger-tint);
+  color: var(--color-kumo-danger);
+}
+
+@keyframes model-test-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+    filter: blur(2px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .model-test-result {
+    animation: none;
+  }
+}

@@ -7,6 +7,7 @@ import type {
   HubState,
   PushSubscriptionData,
 } from "@/lib/types"
+import type { ModelSettings, ModelTestResult } from "@/lib/models"
 import type { Viewer } from "@/lib/server-fns"
 import type { UserHub } from "@/agents/user-hub"
 
@@ -31,6 +32,13 @@ interface HubContextValue {
   push: PushApi | null
   /** Memory all bots read. Null until the hub WebSocket is up. */
   sharedMemory: SharedMemoryApi | null
+  /** Which models bots use. Null until the hub WebSocket is up. */
+  models: ModelsApi | null
+}
+
+export interface ModelsApi {
+  set: (patch: Partial<ModelSettings>) => Promise<void>
+  test: (modelId: string) => Promise<ModelTestResult>
 }
 
 export interface MemoryRevision {
@@ -92,6 +100,7 @@ export function StaticHubProvider({
       reconnect: notConnected,
       push: null,
       sharedMemory: null,
+      models: null,
     }),
     [viewer, initial]
   )
@@ -135,6 +144,13 @@ export function LiveHubProvider({ viewer, initial, children }: ProviderProps) {
               get: () => agent.stub.getSharedMemory(),
               set: (content) => agent.stub.setSharedMemory(content),
               restore: (id) => agent.stub.restoreSharedMemory(id),
+            }
+          : null,
+      models:
+        agent.state !== undefined
+          ? {
+              set: (patch) => agent.stub.setModels(patch),
+              test: (modelId) => agent.stub.testModel(modelId),
             }
           : null,
     }),
