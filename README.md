@@ -1,4 +1,4 @@
-# Coworkers
+# 🤖 Coworkers
 
 AI teammates that each get their own computer and browser. Built entirely on
 Cloudflare.
