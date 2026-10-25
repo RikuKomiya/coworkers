@@ -146,13 +146,19 @@ export class UserHub extends Agent<Env, HubState> {
   @callable()
   async deleteBot(botId: string) {
     // Drop it from the directory first: `destroy()` aborts the bot's isolate,
-    // so the RPC usually rejects even when the teardown went through.
+    // so calls to it reject ("destroyed") even when the teardown went through.
+    // That includes the lookup, which calls the bot too, so neither may fail
+    // the delete.
     this.setState({
       ...this.state,
       bots: this.state.bots.filter((b) => b.id !== botId),
     })
-    const bot = await this.bot(botId)
-    await bot.destroy().catch(() => {})
+    try {
+      const bot = await this.bot(botId)
+      await bot.destroy()
+    } catch (err) {
+      console.warn(`deleteBot ${botId}: teardown reported`, err)
+    }
   }
 
   @callable()

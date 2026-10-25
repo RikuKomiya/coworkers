@@ -839,8 +839,10 @@ function DangerZone() {
   async function remove() {
     setDeleting(true)
     try {
-      await hub.deleteBot(botId)
+      // Leave the bot's page first, so its live connection closes instead of
+      // reconnecting to the bot as it is torn down (and waking it again).
       await navigate({ to: "/" })
+      await hub.deleteBot(botId)
     } finally {
       setDeleting(false)
     }
