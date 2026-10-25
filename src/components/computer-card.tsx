@@ -290,26 +290,29 @@ function pageLabel(page: { title?: string; pageUrl?: string } | undefined) {
   }
 }
 
-/** One line for the card: where the bot is and how far it got. */
-function describe(
-  status: CardStatus,
-  steps: number,
-  page?: { title?: string; pageUrl?: string }
-) {
-  const where = pageLabel(page)
+/** Sites in visiting order, without repeats in a row. */
+function trailOf(urls: (string | undefined)[]) {
+  return urls.map(hostOf).filter((host, i, all) => host && host !== all[i - 1])
+}
+
+/**
+ * One short line for the card header: where the bot is and how far it got.
+ * Site names, not page titles, so it stays one line as the bot moves on.
+ */
+function describe(status: CardStatus, steps: number, sites: string[]) {
   const count = `${steps} ${steps === 1 ? "step" : "steps"}`
+  const trail =
+    sites.length > 3 ? `${sites[0]} → … → ${sites.at(-1)}` : sites.join(" → ")
   switch (status) {
     case "working":
     case "action_needed":
-      return where ? `Working on ${where}` : "Opening the browser…"
+      return sites.length ? `On ${sites.at(-1)}` : "Opening the browser…"
     case "skipped":
-      return `A browser step failed, so the bot tried another way · ${count}`
+      return `A step failed, so the bot tried another way · ${count}`
     case "failed":
-      return `The last browser step failed · ${count}`
+      return `The last step failed · ${count}`
     case "done":
-      return where
-        ? `Used the browser on ${where} · ${count}`
-        : `Used the browser · ${count}`
+      return trail ? `${trail} · ${count}` : count
   }
 }
 
@@ -387,22 +390,6 @@ function useFrames(
   return ready.flatMap((c) => (frames[c.id] ? [frames[c.id]!] : []))
 }
 
-/** The sites the bot went through, in order, without repeats in a row. */
-function Trail({ frames }: { frames: Frame[] }) {
-  const hosts = frames
-    .map((f) => hostOf(f.url))
-    .filter((host, i, all) => host && host !== all[i - 1])
-  if (hosts.length < 2) return null
-  return (
-    <p
-      className="mt-1 truncate text-[13px] text-kumo-subtle"
-      title={hosts.join(" → ")}
-    >
-      {hosts.join(" → ")}
-    </p>
-  )
-}
-
 function FrameImage({
   frame,
   className = "",
@@ -461,11 +448,15 @@ export function ComputerCard({
   // The server lists the bot's own tab first.
   const tab = live ? tabs?.[0] : undefined
   const page = tab ?? (frame && { title: frame.title, pageUrl: frame.url })
-  const instructions =
+  const sites = trailOf([...frames.map((f) => f.url), tab?.pageUrl])
+  const summary = describe(status, calls.length, sites)
+  // A hand-off asks the user to do something: that sentence is shown whole.
+  const handoffText =
     typeof handoff?.input.instructions === "string" &&
     (status === "action_needed" || calls.at(-1) === handoff)
       ? handoff.input.instructions
-      : describe(status, calls.length, page)
+      : null
+  const instructions = handoffText ?? summary
 
   // Pick up the page the bot just navigated to.
   useEffect(() => {
@@ -512,18 +503,27 @@ export function ComputerCard({
   const showPlaceholder = live && !preview
 
   return (
-    <div className="w-full max-w-[640px] rounded-3xl bg-kumo-tint p-4">
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-[15px] font-semibold text-kumo-default">
+    <div className="w-full max-w-[640px] rounded-[22px] bg-kumo-tint p-1.5">
+      <div className="flex h-9 items-center gap-2 pr-1 pl-3">
+        <span className="shrink-0 text-[14px] font-semibold text-kumo-default">
           Computer
+        </span>
+        <span
+          className="min-w-0 flex-1 truncate text-[13px] text-kumo-subtle"
+          title={summary}
+        >
+          {summary}
         </span>
         <StatusChip status={status} />
       </div>
-      <p className="mt-1 text-[15px] text-kumo-default">{instructions}</p>
-      <Trail frames={frames} />
+      {handoffText ? (
+        <p className="px-3 pt-0.5 pb-2.5 text-[15px] text-kumo-default">
+          {handoffText}
+        </p>
+      ) : null}
 
       {preview || showPlaceholder ? (
-        <div className="mt-3 overflow-hidden rounded-2xl bg-kumo-base shadow-[0_1px_3px_rgba(0,0,0,0.05)] outline outline-1 -outline-offset-1 outline-black/[0.08]">
+        <div className="overflow-hidden rounded-2xl bg-kumo-base shadow-[0_1px_3px_rgba(0,0,0,0.05)] outline outline-1 -outline-offset-1 outline-black/[0.08]">
           {chrome}
           {preview ? (
             <button
@@ -558,7 +558,7 @@ export function ComputerCard({
       ) : null}
 
       {status === "action_needed" && onApproval ? (
-        <div className="mt-3 flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2 px-1.5 pt-2.5 pb-1">
           <Button
             variant="primary"
             className="btn-ink rounded-full"
