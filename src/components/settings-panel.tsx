@@ -838,11 +838,19 @@ function DangerZone() {
 
   async function remove() {
     setDeleting(true)
+    // Land on the bot at the top of the sidebar. Leave this bot's page before
+    // deleting, so its live connection closes instead of waking the bot as
+    // it is torn down. Not via "/": that redirects to the most recent bot,
+    // which is often this one.
+    const next = hub.state.bots.find((b) => b.id !== botId)
     try {
-      // Leave the bot's page first, so its live connection closes instead of
-      // reconnecting to the bot as it is torn down (and waking it again).
-      await navigate({ to: "/" })
-      await hub.deleteBot(botId)
+      if (next) {
+        await navigate({ to: "/bots/$botId", params: { botId: next.id } })
+        await hub.deleteBot(botId)
+      } else {
+        await hub.deleteBot(botId)
+        await navigate({ to: "/" })
+      }
     } finally {
       setDeleting(false)
     }
