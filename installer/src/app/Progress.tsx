@@ -1,7 +1,7 @@
 import { Button } from "@cloudflare/kumo/components/button"
 import { RobotHead } from "robot-heads"
 import type { RobotHeadState } from "robot-heads"
-import { BOT_AVATARS, BOT_AVATAR_LOOKS } from "@bdots/types"
+import { BOT_AVATARS, BOT_AVATAR_LOOKS } from "@coworkers/types"
 import { STEP_COPY } from "../shared"
 import type { InstallerState, StepStatus } from "../shared"
 import type { InstallerAgent } from "./App"

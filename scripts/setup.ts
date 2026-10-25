@@ -1,5 +1,5 @@
 /**
- * `pnpm run setup`: deploy bdots to your account with the `cf` CLI, the same
+ * `pnpm run setup`: deploy Coworkers to your account with the `cf` CLI, the same
  * way the installer does: AI Gateway, Cloudflare Access in front, Web Push
  * keys. Run it again any time to update; it picks up where you left off.
  *
@@ -10,7 +10,7 @@
  *   4. sets up Access (allow list, plus a bypass for /apps and /api/hooks)
  *   5. deploys again with the Access application's AUD
  *
- * Choices go in bdots.deploy.json (read by cloudflare.config.ts) and secrets
+ * Choices go in coworkers.deploy.json (read by cloudflare.config.ts) and secrets
  * in .dev.vars.production. Both are git-ignored.
  */
 import { spawn } from "node:child_process"
@@ -19,7 +19,8 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { createInterface } from "node:readline/promises"
 import { MODELS, PROVIDERS } from "../src/lib/models.ts"
 
-const DEPLOY_FILE = "bdots.deploy.json"
+const DEPLOY_FILE = "coworkers.deploy.json"
+const LEGACY_DEPLOY_FILE = "bdots.deploy.json"
 const SECRETS_FILE = ".dev.vars.production"
 /** Access is required but nothing can pass it: the first deploy is closed. */
 const LOCKED = { accessTeamDomain: "locked.invalid", accessAud: "locked" }
@@ -44,7 +45,7 @@ function step(whimsy: string, detail: string) {
 }
 
 /**
- * `--yes` (or no terminal) takes the answers saved in bdots.deploy.json, and
+ * `--yes` (or no terminal) takes the answers saved in coworkers.deploy.json, and
  * the defaults for the rest, without asking.
  */
 const interactive = process.stdin.isTTY && !process.argv.includes("--yes")
@@ -126,9 +127,9 @@ async function maybe<T>(args: string[], accountId: string) {
 }
 
 function readDeploy(): DeployFile {
-  return existsSync(DEPLOY_FILE)
-    ? JSON.parse(readFileSync(DEPLOY_FILE, "utf8"))
-    : {}
+  // Moves a deployment set up before the rename to the new file name.
+  const file = [DEPLOY_FILE, LEGACY_DEPLOY_FILE].find((f) => existsSync(f))
+  return file ? JSON.parse(readFileSync(file, "utf8")) : {}
 }
 
 function writeDeploy(file: DeployFile) {
@@ -137,8 +138,8 @@ function writeDeploy(file: DeployFile) {
 
 /** VAPID keys for Web Push, created once and kept: new keys break subscriptions. */
 /**
- * Optional secrets bdots declares. `cf deploy` refuses to create a Worker
- * while any declared secret is missing, and bdots treats an empty one as
+ * Optional secrets Coworkers declares. `cf deploy` refuses to create a Worker
+ * while any declared secret is missing, and Coworkers treats an empty one as
  * "feature off", so they start empty.
  */
 const OPTIONAL_SECRETS = ["BROWSER_RUN_API_TOKEN"]
@@ -167,7 +168,7 @@ function ensureSecrets() {
   return created ? "created" : "kept"
 }
 
-/** `pnpm build` (bindings come from bdots.deploy.json at build time). */
+/** `pnpm build` (bindings come from coworkers.deploy.json at build time). */
 function build() {
   return new Promise<void>((resolve, reject) => {
     const child = spawn("pnpm", ["build"], {
@@ -222,11 +223,11 @@ async function upsert(
 async function main() {
   const saved = readDeploy()
   console.log(
-    `\n${bold("bdots setup")} ${dim("deploys to your Cloudflare account with cf")}`
+    `\n${bold("Coworkers setup")} ${dim("deploys to your Cloudflare account with cf")}`
   )
 
   // ── Choices ──────────────────────────────────────────────────────
-  step("Measuring the workshop", "who you are and where bdots goes")
+  step("Measuring the workshop", "who you are and where Coworkers goes")
   const [user, accounts] = await Promise.all([
     cf<{ email: string }>(["user", "get"]),
     cf<Named[]>(["accounts", "list"]),
@@ -244,7 +245,7 @@ async function main() {
   account ??= await choose("Account", accounts, (a) => a.name)
   console.log(`  Account: ${account.name}`)
 
-  const name = (await ask("Worker name", saved.name ?? "bdots")).toLowerCase()
+  const name = (await ask("Worker name", saved.name ?? "coworkers")).toLowerCase()
   const emails = (
     await ask(
       "Who can sign in (comma separated)",
@@ -272,7 +273,7 @@ async function main() {
     )
     model = picked.id
   }
-  const gateway = saved.gateway ?? "bdots"
+  const gateway = saved.gateway ?? "coworkers"
   rl?.close()
 
   const accountId = account.id
@@ -325,7 +326,7 @@ async function main() {
     file.host = host ?? file.host
     if (!file.host) {
       throw new Error(
-        'Could not find the workers.dev URL in the deploy output. Add "host" to bdots.deploy.json and run setup again.'
+        'Could not find the workers.dev URL in the deploy output. Add "host" to coworkers.deploy.json and run setup again.'
       )
     }
     writeDeploy({ ...file, ...LOCKED })
@@ -384,12 +385,12 @@ async function main() {
     { accountId }
   )
   const allow = await upsert("policies", accountId, policies, {
-    name: `bdots ${name}: people`,
+    name: `coworkers ${name}: people`,
     decision: "allow",
     include: emails.map((email) => ({ email: { email } })),
   })
   const bypass = await upsert("policies", accountId, policies, {
-    name: `bdots ${name}: share links and webhooks`,
+    name: `coworkers ${name}: share links and webhooks`,
     decision: "bypass",
     include: [{ everyone: {} }],
   })
@@ -400,7 +401,7 @@ async function main() {
   // Public hostname destinations: Worker destinations refuse WebSockets.
   const app = await upsert("applications", accountId, apps, {
     type: "self_hosted",
-    name: `bdots ${name}`,
+    name: `coworkers ${name}`,
     destinations: [{ type: "public", uri: host }],
     policies: [allow.id],
     session_duration: "720h",
@@ -408,7 +409,7 @@ async function main() {
   })
   await upsert("applications", accountId, apps, {
     type: "self_hosted",
-    name: `bdots ${name}: links`,
+    name: `coworkers ${name}: links`,
     destinations: [
       { type: "public", uri: `${host}/apps` },
       { type: "public", uri: `${host}/api/hooks` },

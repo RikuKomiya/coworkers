@@ -275,7 +275,7 @@ export class UserHub extends Agent<Env, HubState> {
   @callable()
   async testPush() {
     return this.push({
-      title: "bdots",
+      title: "Coworkers",
       body: "Notifications are on. Your bots will reach you here.",
       tag: "test",
       url: "/",
@@ -659,7 +659,7 @@ export class UserHub extends Agent<Env, HubState> {
     })
   }
 
-  /** Where the user opens bdots, so bots can hand out full app links. */
+  /** Where the user opens Coworkers, so bots can hand out full app links. */
   async appOrigin(): Promise<string | null> {
     return this.origin ?? null
   }

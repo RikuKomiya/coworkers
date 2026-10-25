@@ -21,7 +21,7 @@ export interface ReleaseManifest {
     durableObjects: string[]
     /** Bindings with their defaults; the installer overrides some vars. */
     bindings: ApiBinding[]
-    /** Secret names bdots declares. The installer fills the ones it can. */
+    /** Secret names Coworkers declares. The installer fills the ones it can. */
     secrets: string[]
   }
   /** `/path` → hash and size, for the assets upload session. */
@@ -40,7 +40,7 @@ export function loadRelease(assets: Fetcher): Promise<ReleaseManifest> {
     if (!response.ok) {
       cached = null
       throw new Error(
-        "This installer has no bdots release packed. Run `pnpm pack-release` in installer/."
+        "This installer has no Coworkers release packed. Run `pnpm pack-release` in installer/."
       )
     }
     return response.json<ReleaseManifest>()

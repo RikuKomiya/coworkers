@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useState } from "react"
 
-export const SIDEBAR_COOKIE = "bdots-sidebar"
-export const WIDTHS_COOKIE = "bdots-widths"
+export const SIDEBAR_COOKIE = "coworkers-sidebar"
+export const WIDTHS_COOKIE = "coworkers-widths"
 
 export interface PanelWidths {
   /** Sidebar width in px. */
@@ -10,7 +10,7 @@ export interface PanelWidths {
   panel?: number
 }
 
-/** Reads `bdots-widths=sidebar:300,panel:520` from a Cookie header. */
+/** Reads `coworkers-widths=sidebar:300,panel:520` from a Cookie header. */
 export function parseWidths(cookie: string): PanelWidths {
   const raw = new RegExp(`${WIDTHS_COOKIE}=([^;]*)`).exec(cookie)?.[1]
   const widths: PanelWidths = {}

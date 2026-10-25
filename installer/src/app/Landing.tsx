@@ -44,7 +44,7 @@ export function Landing({ configured }: { configured: boolean }) {
         Your own AI teammates, on your own Cloudflare
       </h1>
       <p className="mt-3 max-w-[440px] text-[15px] text-pretty text-kumo-subtle">
-        Sign in, pick a name and a model, and bdots builds itself into your
+        Sign in, pick a name and a model, and Coworkers builds itself into your
         account in about a minute. You own all of it.
       </p>
 

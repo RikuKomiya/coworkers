@@ -1,12 +1,12 @@
 /**
- * Builds bdots and packs it into the installer's static assets:
+ * Builds Coworkers and packs it into the installer's static assets:
  *
  *   public/release/manifest.json   what to upload and how (ReleaseManifest)
  *   public/release/modules/...     the Worker's ES modules
  *   public/release/assets/...      the Worker's static assets
  *
  * The installer reads these through its ASSETS binding, so each installer
- * deploy carries exactly one bdots release. Run from installer/:
+ * deploy carries exactly one Coworkers release. Run from installer/:
  * `node scripts/pack-release.ts` (or `--skip-build` to reuse the last build).
  */
 import { execFileSync } from "node:child_process"
@@ -30,17 +30,17 @@ const out = fileURLToPath(new URL("../public/release", import.meta.url))
 const built = join(root, ".cloudflare/output/v0/workers/default")
 
 if (!process.argv.includes("--skip-build")) {
-  // BDOTS_PACKING: build with the defaults, not the packer's own
-  // bdots.deploy.json (its Access AUD and team domain would ship publicly).
+  // COWORKERS_PACKING: build with the defaults, not the packer's own
+  // coworkers.deploy.json (its Access AUD and team domain would ship publicly).
   execFileSync("pnpm", ["build"], {
     cwd: root,
     stdio: "inherit",
-    env: { ...process.env, BDOTS_PACKING: "1" },
+    env: { ...process.env, COWORKERS_PACKING: "1" },
   })
 }
 if (!existsSync(join(built, "worker.config.json"))) {
   throw new Error(
-    `No bdots build at ${built}. Run \`pnpm build\` in the repo root.`
+    `No Coworkers build at ${built}. Run \`pnpm build\` in the repo root.`
   )
 }
 
@@ -83,11 +83,11 @@ function apiBinding(name: string, b: BuiltBinding): ApiBinding | null {
       return { type: "plain_text", name, text: b.value ?? "" }
     case "secret":
       // Filled by the installer when it has a value (VAPID keys); left out
-      // otherwise, which bdots treats as "feature off".
+      // otherwise, which Coworkers treats as "feature off".
       return null
     default:
       throw new Error(
-        `bdots binding ${name} has type "${b.type}", which the installer cannot deploy yet. Teach pack-release.ts and src/deploy/upload.ts about it.`
+        `coworkers binding ${name} has type "${b.type}", which the installer cannot deploy yet. Teach pack-release.ts and src/deploy/upload.ts about it.`
       )
   }
 }
@@ -173,5 +173,5 @@ const moduleBytes = modules.reduce(
   0
 )
 console.log(
-  `Packed bdots ${manifest.release}: ${modules.length} modules (${size(moduleBytes)}), ${Object.keys(assets).length} assets, ${bindings.length} bindings.`
+  `Packed Coworkers ${manifest.release}: ${modules.length} modules (${size(moduleBytes)}), ${Object.keys(assets).length} assets, ${bindings.length} bindings.`
 )

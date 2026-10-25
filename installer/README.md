@@ -1,7 +1,7 @@
-# bdots installer
+# Coworkers installer
 
-"Deploy to Cloudflare" for bdots: a small Worker where someone signs in with
-Cloudflare, picks a name, a URL, who can sign in and a model, and gets bdots
+"Deploy to Cloudflare" for Coworkers: a small Worker where someone signs in with
+Cloudflare, picks a name, a URL, who can sign in and a model, and gets Coworkers
 running in their own account about a minute later. No clone, no CLI.
 
 ```
@@ -20,19 +20,19 @@ Installer Durable Object (one per sign-in; token encrypted at rest)
 ```
 
 Each step can be re-run. A failed install resumes from the step that failed,
-and installing again under the same name updates bdots in place. Bots, secrets
+and installing again under the same name updates Coworkers in place. Bots, secrets
 and the Durable Object data all stay.
 
 ## How the release gets here
 
-`scripts/pack-release.ts` builds bdots (`pnpm build` in the repo root) and
+`scripts/pack-release.ts` builds Coworkers (`pnpm build` in the repo root) and
 copies the result into `public/release/`. It writes the Worker modules, the
 static assets, and a `manifest.json` with asset hashes and the Workers API
 bindings. That folder ships as the installer's own static assets, so **each
-installer deploy carries exactly one bdots version**: the commit it was packed
+installer deploy carries exactly one Coworkers version**: the commit it was packed
 from.
 
-If bdots gains a binding type the installer cannot deploy, the pack fails.
+If Coworkers gains a binding type the installer cannot deploy, the pack fails.
 Teach `pack-release.ts` and `src/deploy/upload.ts` about the new type.
 
 ## Set up
@@ -87,19 +87,19 @@ pnpm typecheck
 
 | Resource | Name |
 | --- | --- |
-| Worker (tagged `bdots`) | the name they pick |
+| Worker (tagged `coworkers`) | the name they pick |
 | Durable Object classes | `UserHub`, `BotAgent`, `AppLive` (first install only) |
-| AI Gateway | the name they pick (default `bdots`), authenticated |
+| AI Gateway | the name they pick (default `coworkers`), authenticated |
 | Access organization | only if the account has none, with a one-time PIN login |
-| Access policy | `bdots <name>: people` (their email list) |
-| Access policy | `bdots <name>: share links and webhooks` (bypass) |
-| Access applications | `bdots <name>`, and `bdots <name>: links` for `/apps` and `/api/hooks` |
+| Access policy | `coworkers <name>: people` (their email list) |
+| Access policy | `coworkers <name>: share links and webhooks` (bypass) |
+| Access applications | `coworkers <name>`, and `coworkers <name>: links` for `/apps` and `/api/hooks` |
 | Secrets | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, generated on first install |
 
-bdots reads `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD`, and verifies the Access JWT
+Coworkers reads `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD`, and verifies the Access JWT
 on every request (`src/lib/auth.ts` in the repo root). Access destinations are
 public hostnames, not Worker destinations, because Worker destinations refuse
-the WebSocket upgrades bdots runs on.
+the WebSocket upgrades Coworkers runs on.
 
 ## Not verified against a real account yet
 

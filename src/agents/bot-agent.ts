@@ -217,7 +217,7 @@ const PRIVATE_APP_FILES = new Set(["server.js", "app.json"])
  * Main module of an app's Dynamic Worker. The binding arrives per request
  * as entrypoint props; this puts it on `env.BOT` for the app's server.js.
  */
-const APP_SERVER_MAIN = "__bdots_main.js"
+const APP_SERVER_MAIN = "__coworkers_main.js"
 const APP_SERVER_WRAPPER = `import app from "./server.js";
 export default {
   fetch(request, env, ctx) {
@@ -539,7 +539,7 @@ export class BotAgent extends Think<Env, BotState> {
   #readOnlyAppTools = new Set<string>()
   #turnStartedAt = 0
   #appStore?: AppStore
-  /** The user's bdots origin, from the hub each turn. Empty until known. */
+  /** The user's Coworkers origin, from the hub each turn. Empty until known. */
   #origin = ""
   #reports: Promise<void> = Promise.resolve()
   /** Shell commands share one backend, so they run one at a time. */
@@ -1887,7 +1887,7 @@ export class BotAgent extends Think<Env, BotState> {
       }),
 
       save_app: tool({
-        description: `Build or update a small web app for the user, served from their bdots host. Writes \`files\` to ${APPS_ROOT}/<slug>/, checks the app and publishes it; open copies reload. To publish files you already wrote or edited there yourself, omit \`files\`. See "Building apps".`,
+        description: `Build or update a small web app for the user, served from their Coworkers host. Writes \`files\` to ${APPS_ROOT}/<slug>/, checks the app and publishes it; open copies reload. To publish files you already wrote or edited there yourself, omit \`files\`. See "Building apps".`,
         inputSchema: z.object({
           slug: z
             .string()
@@ -2168,10 +2168,10 @@ export class BotAgent extends Think<Env, BotState> {
   private async checkAppServer(slug: string, version: number) {
     try {
       const server = this.appServer(slug, version, {
-        label: "bdots check",
+        label: "coworkers check",
         mode: "view",
       })
-      await server.fetch("https://app.invalid/__bdots_check")
+      await server.fetch("https://app.invalid/__coworkers_check")
       return null
     } catch (err) {
       return err instanceof Error ? err.message : String(err)
@@ -2298,7 +2298,7 @@ export class BotAgent extends Think<Env, BotState> {
       // Stamp the version, so errors from stale copies can be told apart.
       const html = await this.workspace.fs.readFile(full, "utf8")
       const version = this.apps.get(slug)?.version ?? 0
-      const meta = `<meta name="bdots-version" content="${version}">`
+      const meta = `<meta name="coworkers-version" content="${version}">`
       const stamped = /<head[^>]*>/i.test(html)
         ? html.replace(/<head[^>]*>/i, (head) => `${head}${meta}`)
         : html
@@ -3280,7 +3280,7 @@ export class BotAgent extends Think<Env, BotState> {
       if (url.protocol !== "https:" && url.protocol !== "http:")
         throw new Error("Only http(s) URLs can be watched.")
       const response = await fetch(url, {
-        headers: { "user-agent": "bdots-watch/1" },
+        headers: { "user-agent": "coworkers-watch/1" },
         signal: AbortSignal.timeout(20_000),
       })
       if (!response.ok)

@@ -12,11 +12,11 @@
  * a `cdp` connector (`cdp.send`, `cdp.attachToTarget`).
  */
 
-const LOG_KEY = "__bdots_teach__"
+const LOG_KEY = "__coworkers_teach__"
 
 const RECORDER = `(() => {
-  if (window.__bdotsTeach) return;
-  window.__bdotsTeach = true;
+  if (window.__coworkersTeach) return;
+  window.__coworkersTeach = true;
   const KEY = ${JSON.stringify(LOG_KEY)};
   const SECRET = /pass|otp|one-time|code|cvv|cvc|card|ssn|pin|secret|token/i;
   function read() {

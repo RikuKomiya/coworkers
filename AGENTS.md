@@ -1,13 +1,13 @@
 # Agent Instructions
 
-This is **bdots**, a **TanStack Start + Cloudflare Workers** app built to be
+This is **coworkers**, a **TanStack Start + Cloudflare Workers** app built to be
 driven by coding agents. Read this whole file before generating code. The patterns
 here are the ones that work — most AI training data is out of date for
 TanStack Start, for Workers, and especially for the `cf` CLI.
 
-## This project: bdots
+## This project: Coworkers
 
-bdots is a multi-bot "AI teammates" app (spec: `product.md`). Each bot is a
+Coworkers is a multi-bot "AI teammates" app (spec: `product.md`). Each bot is a
 Durable Object with its own chat, memory, routines, computer and browser.
 
 | Piece         | Where                                                                        | Notes                                                                                                                                                               |
@@ -36,7 +36,7 @@ Things that will bite you:
   `useAgentChat` under `ClientOnly`, with a loader-fed fallback.
 - **Never add the `experimental` compatibility flag.** `@cloudflare/computer`'s
   README asks for it, but Cloudflare rejects any deploy that sets it
-  (error 10021), so nobody could deploy bdots.
+  (error 10021), so nobody could deploy Coworkers.
 - **`cf dev` needs a Cloudflare login** because `AI` and `BROWSER` are
   remote-only bindings. The dev server uses Wrangler's login
   (`npx wrangler login`), which can differ from `cf auth login`.

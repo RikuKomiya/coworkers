@@ -22,4 +22,5 @@ todos.json
 installer/public/release
 
 # Your deployment's values, written by pnpm run setup
+coworkers.deploy.json
 bdots.deploy.json

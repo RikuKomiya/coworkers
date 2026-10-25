@@ -1,4 +1,4 @@
-# Bots
+# Coworkers
 
 AI teammates that each get their own computer and browser. Built entirely on
 Cloudflare.
@@ -8,7 +8,7 @@ you're away. They ask before doing anything risky. When one needs a login,
 it hands you its browser.
 
 > [!WARNING]
-> Bots is still under heavy development and is experimental. Use it with
+> Coworkers is still under heavy development and is experimental. Use it with
 > caution.
 
 > [!NOTE]
@@ -177,14 +177,14 @@ Dynamic Workers require it).
 ### Option A: the installer
 
 Sign in with Cloudflare, pick a name, who can sign in and a model, and the
-installer builds bdots into your account: the Worker, an AI Gateway, and
-Cloudflare Access in front. Re-running it with the same name updates bdots
+installer builds Coworkers into your account: the Worker, an AI Gateway, and
+Cloudflare Access in front. Re-running it with the same name updates Coworkers
 and keeps your bots. How it works and how to host it: [`installer/`](installer/README.md).
 
 ### Option B: one command
 
 ```bash
-git clone https://github.com/fayazara/bdots && cd bdots
+git clone https://github.com/fayazara/coworkers && cd coworkers
 pnpm install
 cf auth login
 pnpm run setup
@@ -200,7 +200,7 @@ then does what the installer does with the `cf` CLI:
    links (`/apps`) and webhooks (`/api/hooks`), which carry their own tokens
 4. deploys again with the Access application's AUD
 
-Your choices go in `bdots.deploy.json` and secrets in `.dev.vars.production`.
+Your choices go in `coworkers.deploy.json` and secrets in `.dev.vars.production`.
 Both are git-ignored. **To update later:** `git pull`, then `pnpm run setup`
 again. It remembers your answers, and bots and their data are kept.
 
@@ -217,19 +217,19 @@ With more than one account, prefix `cf` commands with
 **1. Create the AI Gateway**
 
 ```bash
-cf ai-gateway gateways create --id bdots --authentication --collect-logs \
+cf ai-gateway gateways create --id coworkers --authentication --collect-logs \
   --cache-invalidate-on-update --cache-ttl 0 \
   --rate-limiting-interval 0 --rate-limiting-limit 0
 ```
 
-**2. Write `bdots.deploy.json`** in the repo root. Leaving out the Access
-values deploys bdots open to everyone as the `demo` user, so start with
+**2. Write `coworkers.deploy.json`** in the repo root. Leaving out the Access
+values deploys Coworkers open to everyone as the `demo` user, so start with
 placeholders that lock it:
 
 ```json
 {
-  "name": "bdots",
-  "gateway": "bdots",
+  "name": "coworkers",
+  "gateway": "coworkers",
   "accessTeamDomain": "locked.invalid",
   "accessAud": "locked"
 }
@@ -253,14 +253,14 @@ Note the `https://<name>.<subdomain>.workers.dev` URL it prints. It answers
    **Emails** for everyone who should get in.
 2. **Add another policy:** action **Bypass**, include **Everyone**.
 3. **Access → Applications → Add → Self-hosted:** public hostname = your
-   bdots host, no path, with the Allow policy. Use a public hostname, not a
+   Coworkers host, no path, with the Allow policy. Use a public hostname, not a
    Worker destination: Worker destinations refuse WebSocket upgrades.
 4. **Add a second self-hosted application:** your host with path `apps`, and
    your host with path `api/hooks`, with the Bypass policy.
 5. Copy the first application's **Application Audience (AUD) Tag** from its
    overview. Your team domain is on Zero Trust's **Settings** page.
 
-**5. Unlock and deploy again.** Put the real values in `bdots.deploy.json`:
+**5. Unlock and deploy again.** Put the real values in `coworkers.deploy.json`:
 
 ```json
   "accessTeamDomain": "<team>.cloudflareaccess.com",
@@ -273,7 +273,7 @@ pnpm run deploy --secrets-file .dev.vars.production
 
 </details>
 
-Either way, bdots then checks the Access token on every request and answers
+Either way, Coworkers then checks the Access token on every request and answers
 401 without a valid one, so it stays closed even if Access is turned off by
 mistake. Each email gets its own bots.
 
@@ -287,7 +287,7 @@ credits or your own provider key to the gateway, then press **Test**.
 ## Configuration
 
 Set in `cloudflare.config.ts`. Everything has a working default.
-`bdots.deploy.json`, if present, overrides the name, `MODEL`,
+`coworkers.deploy.json`, if present, overrides the name, `MODEL`,
 `AI_GATEWAY_ID` and the two `ACCESS_*` values.
 
 | Setting                  | What it does                                                          |

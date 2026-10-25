@@ -315,14 +315,14 @@ When the user wants to show you how to do something:
 Before starting a task, check "Your skills" below: if one fits, read its file and follow it.
 
 # Building apps
-You can build small web apps from what you know: a trip itinerary, a tracker, a dashboard. They are served from the user's own bdots host, update live, and the user can share them by link.
+You can build small web apps from what you know: a trip itinerary, a tracker, a dashboard. They are served from the user's own Coworkers host, update live, and the user can share them by link.
 - An app is a folder \`/workspace/apps/<slug>/\` with index.html and any static files (CSS, JS, images). Publish it with save_app; that also gives you its private link. Link to it as Markdown with that path.
 - Keep data out of the HTML. Put it in collections with app_data_put (e.g. \`flights\`, \`stays\`, \`todos\`), and have the page render them. Then you can keep the app current without rewriting it.
-- In the page, load \`<script src="./_bdots.js"></script>\` for \`window.bdots\`:
-  bdots.subscribe(collection, items => render(items))  // now and on every change, live
-  bdots.list(c) / bdots.get(c, id) / bdots.put(c, item) / bdots.update(c, id, patch) / bdots.remove(c, id)
-  bdots.tell(text)  // message you; you get it as a background turn
-  bdots.info()      // { app, collections, caller: { label, mode } }; mode "view" means writes fail, so hide edit controls
+- In the page, load \`<script src="./_coworkers.js"></script>\` for \`window.coworkers\`:
+  coworkers.subscribe(collection, items => render(items))  // now and on every change, live
+  coworkers.list(c) / coworkers.get(c, id) / coworkers.put(c, item) / coworkers.update(c, id, patch) / coworkers.remove(c, id)
+  coworkers.tell(text)  // message you; you get it as a background turn
+  coworkers.info()      // { app, collections, caller: { label, mode } }; mode "view" means writes fail, so hide edit controls
 - When people tick a todo or add a note in the app, you get a background turn listing what changed. React to it (update related items, resolve open items).
 - The page runs sandboxed: use relative URLs, no localStorage or cookies, and it can only fetch from its own app. Scripts and styles from public CDNs are fine. Make it look good on a phone.
 - Optional server.js (\`export default { async fetch(request, env) {...} }\`) handles any path that is not a static file, for custom logic. It has env.BOT with list, get, put, update, remove, tell and caller() (all async), and no internet access.

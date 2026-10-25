@@ -1,5 +1,5 @@
 // Receives push messages from bots and shows them as notifications, even
-// when no bdots tab is open. Registered by src/lib/push.ts.
+// when no Coworkers tab is open. Registered by src/lib/push.ts.
 
 self.addEventListener("install", () => self.skipWaiting())
 self.addEventListener("activate", (event) =>
@@ -12,7 +12,7 @@ self.addEventListener("push", (event) => {
   try {
     data = event.data.json()
   } catch {
-    data = { title: "bdots", body: event.data.text() }
+    data = { title: "Coworkers", body: event.data.text() }
   }
   const url = new URL(data.url || "/", self.location.origin).href
 
@@ -25,7 +25,7 @@ self.addEventListener("push", (event) => {
           (w) => w.focused && w.visibilityState === "visible" && w.url === url
         )
         if (watching) return
-        return self.registration.showNotification(data.title || "bdots", {
+        return self.registration.showNotification(data.title || "Coworkers", {
           body: data.body || "",
           icon: "/favicon.ico",
           tag: data.tag,

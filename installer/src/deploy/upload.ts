@@ -3,7 +3,7 @@ import { releaseFile } from "../release"
 import type { ApiBinding, ReleaseManifest } from "../release"
 
 /** Tag on every Worker the installer uploads, to recognise its own later. */
-export const SCRIPT_TAG = "bdots"
+export const SCRIPT_TAG = "coworkers"
 
 const MIME: Record<string, string> = {
   js: "application/javascript",
@@ -107,7 +107,7 @@ export async function putScript(
   )
   if (missing.length > 0) {
     throw new Error(
-      `This bdots release does not declare ${missing.join(", ")}. Repack the installer from a newer bdots.`
+      `This Coworkers release does not declare ${missing.join(", ")}. Repack the installer from a newer Coworkers.`
     )
   }
   const bindings: ApiBinding[] = worker.bindings.map((binding) =>
@@ -140,7 +140,7 @@ export async function putScript(
         }
       : {}),
     assets: { jwt: target.assetsJwt },
-    annotations: { "workers/message": `bdots ${release.release}` },
+    annotations: { "workers/message": `coworkers ${release.release}` },
   }
 
   const form = new FormData()

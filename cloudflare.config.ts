@@ -1,6 +1,11 @@
 import { existsSync, readFileSync } from "node:fs"
 import { bindings, defineConfig, exports } from "cf/config"
 
+// bdots.deploy.json: deployments set up before the rename to Coworkers.
+const DEPLOY_FILE = ["coworkers.deploy.json", "bdots.deploy.json"].find((f) =>
+  existsSync(f)
+)
+
 /**
  * Your deployment's own values, written by `pnpm run setup` (scripts/setup.ts)
  * and kept out of git. Anything it leaves out uses the defaults below.
@@ -13,11 +18,11 @@ const deploy: Partial<{
   accessAud: string
 }> =
   // The installer packs a release for everyone: never with your values.
-  !process.env.BDOTS_PACKING && existsSync("bdots.deploy.json")
-    ? JSON.parse(readFileSync("bdots.deploy.json", "utf8"))
+  !process.env.COWORKERS_PACKING && DEPLOY_FILE
+    ? JSON.parse(readFileSync(DEPLOY_FILE, "utf8"))
     : {}
 
-const WORKER_NAME = deploy.name ?? "bdots"
+const WORKER_NAME = deploy.name ?? "coworkers"
 
 /**
  * Cloudflare project config, read by the `cf` CLI and the Cloudflare Vite

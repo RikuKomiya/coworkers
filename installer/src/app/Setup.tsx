@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react"
 import { Button } from "@cloudflare/kumo/components/button"
 import { Select } from "@cloudflare/kumo/components/select"
-import { MODELS, PROVIDERS, formatPrice, providerOf } from "@bdots/models"
-import type { ProviderId } from "@bdots/models"
+import { MODELS, PROVIDERS, formatPrice, providerOf } from "@coworkers/models"
+import type { ProviderId } from "@coworkers/models"
 import type { InstallPlan, InstallerState, NameCheck, Zone } from "../shared"
 import type { InstallerAgent } from "./App"
 import { XIcon } from "./icons"
@@ -81,7 +81,7 @@ export function Setup({
   state: InstallerState
 }) {
   const [accountId, setAccountId] = useState(state.accounts[0]?.id ?? "")
-  const [name, setName] = useState("bdots")
+  const [name, setName] = useState("coworkers")
   const [where, setWhere] = useState<"workers-dev" | "domain">("workers-dev")
   const [zones, setZones] = useState<Zone[] | null>(null)
   const [zoneId, setZoneId] = useState("")
@@ -92,7 +92,7 @@ export function Setup({
   const [draft, setDraft] = useState("")
   const [provider, setProvider] = useState<ProviderId>("workers-ai")
   const [model, setModel] = useState(MODELS[0].id)
-  const [gateway, setGateway] = useState("bdots")
+  const [gateway, setGateway] = useState("coworkers")
   const [starting, setStarting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -176,7 +176,7 @@ export function Setup({
           check && !check.ok ? (
             <span className="text-kumo-danger">{check.reason}</span>
           ) : check?.ok && check.updating ? (
-            "bdots is already installed under this name. Continuing updates it and keeps every bot."
+            "Coworkers is already installed under this name. Continuing updates it and keeps every bot."
           ) : undefined
         }
       >
@@ -375,7 +375,7 @@ export function Setup({
           </p>
         ) : (
           <p className="flex-1 text-xs text-kumo-subtle">
-            {state.release ? `bdots ${state.release}` : null}
+            {state.release ? `Coworkers ${state.release}` : null}
           </p>
         )}
         <Button

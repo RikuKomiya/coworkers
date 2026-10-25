@@ -10,8 +10,8 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
-      // bdots' model catalog, so the installer offers the same models.
-      "@bdots": fileURLToPath(new URL("../src/lib", import.meta.url)),
+      // coworkers' model catalog, so the installer offers the same models.
+      "@coworkers": fileURLToPath(new URL("../src/lib", import.meta.url)),
     },
   },
   plugins: [agents(), cloudflare(), tailwindcss(), react()],

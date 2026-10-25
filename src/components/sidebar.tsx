@@ -24,7 +24,7 @@ import type { BotSummary } from "@/lib/types"
 
 const FOOTER_BUTTON = "icon-btn"
 
-/** Lets bots reach this device when bdots is closed. */
+/** Lets bots reach this device when Coworkers is closed. */
 function NotificationsButton() {
   const { status, busy, enable, disable, test } = usePushNotifications()
   if (status === "loading" || status === "unsupported") return null

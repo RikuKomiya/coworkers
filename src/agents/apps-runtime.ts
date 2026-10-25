@@ -13,10 +13,10 @@ import type { UserHub } from "./user-hub"
  * The token is a per-link capability, so links work without a login (put
  * `/apps/*` in a Cloudflare Access bypass policy, like `/api/hooks/*`).
  * Responses carry a CSP `sandbox`, so app code runs in an opaque origin
- * and cannot reach the bdots UI, its cookies, or the agent sockets.
+ * and cannot reach the Coworkers UI, its cookies, or the agent sockets.
  *
  * Reserved paths under an app:
- *   _bdots.js         the browser helper (window.bdots)
+ *   _coworkers.js     the browser helper (window.coworkers)
  *   _data[/c[/id]]    JSON API over the app's collections
  *   _tell             POST { text }: message the bot
  *   _error            POST { message, stack, source }: a page error, for the bot to fix
@@ -41,7 +41,7 @@ export type AppDataOp =
       message: string
       stack?: string
       source?: string
-      /** The app version the page was served at, from its bdots-version meta. */
+      /** The app version the page was served at, from its coworkers-version meta. */
       version?: number
     }
 
@@ -142,7 +142,8 @@ export async function handleAppRequest(
   // Looking up an unknown bot would create an empty Durable Object.
   if (!(await hub.hasBot(botId))) return notFound()
 
-  if (path === "_bdots.js") {
+  // `_bdots.js` and `window.bdots`: apps published before the rename.
+  if (path === "_coworkers.js" || path === "_bdots.js") {
     return withAppHeaders(
       new Response(CLIENT_JS, {
         headers: {
@@ -163,7 +164,7 @@ export async function handleAppRequest(
     if (!link) return notFound()
     const live = env.AppLive.getByName(appLiveName(userId, botId, slug))
     const headers = new Headers(request.headers)
-    headers.set("X-Bdots-Link", token)
+    headers.set("X-Coworkers-Link", token)
     return live.fetch(new Request(request, { headers }))
   }
 
@@ -185,7 +186,7 @@ export class AppLive extends DurableObject<Env> {
   }
 
   override async fetch(request: Request) {
-    const token = request.headers.get("X-Bdots-Link") ?? ""
+    const token = request.headers.get("X-Coworkers-Link") ?? ""
     const { 0: client, 1: server } = new WebSocketPair()
     this.ctx.acceptWebSocket(server, [token])
     return new Response(null, { status: 101, webSocket: client })
@@ -304,7 +305,7 @@ export const MIME_TYPES: Record<string, string> = {
   woff2: "font/woff2",
 }
 
-/** window.bdots, served at `_bdots.js` next to every app. */
+/** window.coworkers, served at `_coworkers.js` next to every app. */
 const CLIENT_JS = `(() => {
   const script = document.currentScript;
   const root = new URL("./", script ? script.src : location.href);
@@ -324,7 +325,7 @@ const CLIENT_JS = `(() => {
 
   // Page errors go back to the bot, which fixes the app and republishes.
   const reported = new Set();
-  const versionMeta = document.querySelector('meta[name="bdots-version"]');
+  const versionMeta = document.querySelector('meta[name="coworkers-version"], meta[name="bdots-version"]');
   const version = versionMeta ? Number(versionMeta.content) : undefined;
   function report(err, source) {
     const message = String((err && err.message) || err || "Unknown error").slice(0, 500);
@@ -354,10 +355,10 @@ const CLIENT_JS = `(() => {
     const set = listeners.get(collection);
     if (!set || set.size === 0) return;
     try {
-      const items = await bdots.list(collection);
+      const items = await coworkers.list(collection);
       for (const fn of set) fn(items);
     } catch (err) {
-      console.error("bdots: refresh failed", err);
+      console.error("coworkers: refresh failed", err);
       report(err, "subscribe(\\"" + collection + "\\") callback");
     }
   }
@@ -386,7 +387,7 @@ const CLIENT_JS = `(() => {
     };
   }
 
-  const bdots = {
+  const coworkers = {
     /** { app, collections, caller: { label, mode } } */
     info: () => request("GET", "_data"),
     list: (collection) =>
@@ -415,7 +416,7 @@ const CLIENT_JS = `(() => {
     },
   };
 
-  window.bdots = bdots;
+  window.coworkers = window.bdots = coworkers;
   connect();
 })();
 `

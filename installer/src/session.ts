@@ -87,7 +87,7 @@ async function aesKey(secret: string) {
     {
       name: "HKDF",
       hash: "SHA-256",
-      salt: encoder.encode("bdots-installer"),
+      salt: encoder.encode("coworkers-installer"),
       info: encoder.encode("oauth-tokens"),
     },
     base,

@@ -22,7 +22,7 @@ export interface InstallPlan {
   domain: { zoneId: string; zoneName: string; hostname: string } | null
   /** Who may sign in through Cloudflare Access. */
   emails: string[]
-  /** Deployment default chat model (bdots' MODEL). */
+  /** Deployment default chat model (coworkers' MODEL). */
   model: string
   /** AI Gateway every model call goes through. */
   gateway: string
@@ -55,7 +55,7 @@ export const STEP_COPY: Record<StepId, { title: string; whimsy: string }> = {
     whimsy: "Hiring a bouncer",
   },
   upload: {
-    title: "Uploading bdots",
+    title: "Uploading Coworkers",
     whimsy: "Bolting on the parts",
   },
   publish: {
@@ -94,7 +94,7 @@ export interface InstallerState {
   error: InstallError | null
   /** The live URL once published. */
   url: string | null
-  /** bdots version this installer carries. */
+  /** Coworkers version this installer carries. */
   release: string | null
   /** Set when the chosen Worker was installed here before: an update, not a fresh install. */
   updating: boolean

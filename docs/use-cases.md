@@ -1,4 +1,4 @@
-# bdots in real use: four bots, run end to end
+# Coworkers in real use: four bots, run end to end
 
 Run on 2026-10-23 against local dev (`cf dev`, Workers AI, `@cf/deepseek-ai/deepseek-v4.1-flash-1017`).
 No app connections were used (Executor and Cloudflare MCP were not ready),
@@ -60,8 +60,8 @@ numbers kept in app data.
   CPU time only (30M CPU-ms included, $0.02 per extra million).
 - The app renders fully in Chrome. In the Claude app's browser pane it
   shows "Could not load app data", because that pane blocks the app's
-  `_bdots.js` (`ERR_BLOCKED_BY_CLIENT`). That's a pane limitation, not a
-  bdots bug.
+  `_coworkers.js` (`ERR_BLOCKED_BY_CLIENT`). That's a pane limitation, not a
+  Coworkers bug.
 
 **Useful because:** it's a link you can send. The bot can refresh the
 numbers later by updating the data, without rebuilding the page.

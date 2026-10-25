@@ -1,5 +1,5 @@
 import { Agent, callable } from "agents"
-import { isModelId } from "@bdots/models"
+import { isModelId } from "@coworkers/models"
 import { CfApi, CfApiError } from "./cf-api"
 import { SCRIPT_TAG, putScript, uploadAssets, vapidKeys } from "./deploy/upload"
 import { OAuthError, refresh } from "./oauth"
@@ -240,14 +240,14 @@ export class Installer extends Agent<Env, InstallerState> {
         const script = await api.script(plan.accountId, plan.name)
         if (script && !script.tags?.includes(SCRIPT_TAG)) {
           throw new StepError(
-            `This account already has a Worker called ${plan.name} that bdots did not install.`,
+            `This account already has a Worker called ${plan.name} that Coworkers did not install.`,
             "Go back and pick another name."
           )
         }
         save({ subdomain, fresh: !script })
         this.setState({ ...this.state, updating: !!script })
         return script
-          ? "Updating your existing bdots"
+          ? "Updating your existing coworkers"
           : `${subdomain}.workers.dev`
       }
 
@@ -301,7 +301,7 @@ export class Installer extends Agent<Env, InstallerState> {
           assetsJwt,
           fresh: progress.fresh ?? true,
         })
-        return `bdots ${release.release}`
+        return `coworkers ${release.release}`
       }
 
       case "publish": {
@@ -338,7 +338,7 @@ export class Installer extends Agent<Env, InstallerState> {
           await sleep(3000)
         }
         throw new StepError(
-          "bdots is deployed, but its URL did not answer within 90 seconds.",
+          "Coworkers is deployed, but its URL did not answer within 90 seconds.",
           "New URLs can take a few minutes. Try again shortly."
         )
       }
@@ -346,7 +346,7 @@ export class Installer extends Agent<Env, InstallerState> {
   }
 
   /**
-   * Access in front of bdots: an allow list for the app, and a bypass for
+   * Access in front of Coworkers: an allow list for the app, and a bypass for
    * the two paths outsiders use (shared app links and webhooks), which
    * carry their own tokens.
    */
@@ -379,7 +379,7 @@ export class Installer extends Agent<Env, InstallerState> {
     const policies = await api.accessPolicies(plan.accountId)
     const policyId = (name: string) =>
       policies.find((p) => p.name === name)?.id ?? null
-    const allowName = `bdots ${plan.name}: people`
+    const allowName = `coworkers ${plan.name}: people`
     const allow = await api.upsertAccessPolicy(
       plan.accountId,
       policyId(allowName),
@@ -389,7 +389,7 @@ export class Installer extends Agent<Env, InstallerState> {
         include: plan.emails.map((email) => ({ email: { email } })),
       }
     )
-    const bypassName = `bdots ${plan.name}: share links and webhooks`
+    const bypassName = `coworkers ${plan.name}: share links and webhooks`
     const bypass = await api.upsertAccessPolicy(
       plan.accountId,
       policyId(bypassName),
@@ -400,8 +400,8 @@ export class Installer extends Agent<Env, InstallerState> {
     const appId = (name: string) =>
       apps.find((a) => a.name === name)?.id ?? null
     // Public hostname destinations, not Worker ones: those refuse WebSocket
-    // upgrades, and bdots runs on WebSockets.
-    const mainName = `bdots ${plan.name}`
+    // upgrades, and Coworkers runs on WebSockets.
+    const mainName = `coworkers ${plan.name}`
     const app = await api.upsertAccessApp(plan.accountId, appId(mainName), {
       type: "self_hosted",
       name: mainName,
@@ -410,7 +410,7 @@ export class Installer extends Agent<Env, InstallerState> {
       session_duration: "720h",
       app_launcher_visible: true,
     })
-    const linksName = `bdots ${plan.name}: links`
+    const linksName = `coworkers ${plan.name}: links`
     await api.upsertAccessApp(plan.accountId, appId(linksName), {
       type: "self_hosted",
       name: linksName,
@@ -431,7 +431,7 @@ export class Installer extends Agent<Env, InstallerState> {
         this.patchStep("upload", { detail: `Uploading ${done} of 50 files` })
         await sleep(250)
       }
-      return "bdots demo"
+      return "Coworkers demo"
     }
     await sleep(1200 + Math.random() * 800)
     if (id === "publish") {

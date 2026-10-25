@@ -1,12 +1,12 @@
 import { bindings, defineConfig, exports } from "cf/config"
 
-const WORKER_NAME = "bdots-installer"
+const WORKER_NAME = "coworkers-installer"
 
 /**
  * The "Deploy to Cloudflare" installer: Sign in with Cloudflare, then put a
- * prebuilt bdots release into the user's own account through the API. The
+ * prebuilt Coworkers release into the user's own account through the API. The
  * release travels in this Worker's static assets (see
- * scripts/pack-release.ts), so installer version = bdots version.
+ * scripts/pack-release.ts), so installer version = Coworkers version.
  */
 export default defineConfig(({ mode }) => ({
   worker: {

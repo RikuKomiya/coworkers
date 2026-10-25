@@ -29,7 +29,7 @@ export const SCOPES = [
   "workers-routes.write",
   // Pick a zone for a custom domain.
   "zone.read",
-  // Access applications and policies in front of bdots.
+  // Access applications and policies in front of Coworkers.
   "access.write",
   // The Zero Trust organization and the one-time PIN login.
   "access-acct.write",
