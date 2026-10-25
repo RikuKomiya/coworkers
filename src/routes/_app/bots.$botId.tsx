@@ -1,4 +1,11 @@
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react"
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react"
 import {
   ClientOnly,
   Link,
@@ -31,8 +38,15 @@ import { getBotSnapshot } from "@/lib/server-fns"
 import { botInstanceName } from "@/lib/types"
 import type { UIMessage } from "ai"
 import type { BotAgent } from "@/agents/bot-agent"
+import type { BrowserNav } from "@/components/computer-card"
 import type { OnApproval } from "@/components/thread"
 import type { BotState } from "@/lib/types"
+
+interface ApprovalResponse {
+  id: string
+  approved: boolean
+  reason?: string
+}
 
 export const Route = createFileRoute("/_app/bots/$botId")({
   loader: async ({ params }) => {
@@ -248,17 +262,39 @@ function LiveBot({
   }, [agent, connected, timezone])
 
   const getLiveView = useCallback(() => agent.stub.getLiveView(), [agent])
+  const getBrowserFrame = useCallback(
+    (toolCallId: string) => agent.stub.getBrowserFrame(toolCallId),
+    [agent]
+  )
+  const navigateBrowser = useCallback(
+    (action: BrowserNav) => agent.stub.navigateBrowser(action),
+    [agent]
+  )
   const readFile = useCallback(
     (path: string) => agent.stub.readFileData(path),
     [agent]
   )
 
+  // The model can ask (ask_user, a hand-off, an approval) in the same step
+  // as a tool that is still running. Answering then makes the server go on
+  // mid-stream, and the client loses that tool's result ("No tool invocation
+  // found"). Hold answers until the step is over.
+  const busyRef = useRef(busy)
+  busyRef.current = busy
+  const heldAnswers = useRef(new Map<string, ApprovalResponse>())
   const onApproval = useCallback<OnApproval>(
     (id, approved, reason) => {
-      void chat.addToolApprovalResponse({ id, approved, reason })
+      if (busyRef.current) heldAnswers.current.set(id, { id, approved, reason })
+      else void chat.addToolApprovalResponse({ id, approved, reason })
     },
     [chat]
   )
+  useEffect(() => {
+    if (busy || heldAnswers.current.size === 0) return
+    const answers = [...heldAnswers.current.values()]
+    heldAnswers.current.clear()
+    for (const answer of answers) void chat.addToolApprovalResponse(answer)
+  }, [busy, chat])
 
   const onProvideSecret = useCallback(
     (toolCallId: string, value: string) =>
@@ -291,6 +327,8 @@ function LiveBot({
         busy={busy}
         botId={botId}
         getLiveView={getLiveView}
+        getBrowserFrame={getBrowserFrame}
+        navigateBrowser={navigateBrowser}
         readFile={readFile}
         onApproval={onApproval}
         onProvideSecret={onProvideSecret}

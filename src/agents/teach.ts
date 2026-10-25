@@ -114,7 +114,9 @@ export function startTeachingCode(startUrl: string | undefined) {
   const START = ${JSON.stringify(startUrl ?? "")};
   const RECORDER = ${JSON.stringify(RECORDER)};
   const { targetInfos } = await cdp.send({ method: "Target.getTargets" });
-  let targetId = targetInfos.find((t) => t.type === "page")?.targetId;
+  const pages = targetInfos.filter((t) => t.type === "page");
+  // Every session starts with a blank tab; the bot's own tab comes first.
+  let targetId = (pages.find((t) => t.url !== "about:blank") || pages[0])?.targetId;
   if (!targetId) {
     ({ targetId } = await cdp.send({ method: "Target.createTarget", params: { url: START || "about:blank" } }));
   }
@@ -154,7 +156,7 @@ export function finishTeachingCode(session: TeachSession) {
   const { targetInfos } = await cdp.send({ method: "Target.getTargets" });
   const pages = targetInfos.filter((t) => t.type === "page");
   const same = pages.find((t) => t.targetId === recorded);
-  const target = same || pages[0];
+  const target = same || pages.find((t) => t.url !== "about:blank") || pages[0];
   if (!target) return { pages: [], events: [], recycled: true };
   const { sessionId } = await cdp.attachToTarget({ targetId: target.targetId });
   const history = await cdp.send({ method: "Page.getNavigationHistory", sessionId });

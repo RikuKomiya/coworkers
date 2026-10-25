@@ -52,6 +52,7 @@ import type {
   BotInbound,
   BotState,
   BotStatus,
+  BrowserFrame,
   MessageMeta,
   MessageOrigin,
   OpenItem,
@@ -89,6 +90,8 @@ import {
   webhookPrompt,
 } from "./prompt"
 import type { ReportedEntry } from "./prompt"
+import { frameCode, navCode } from "./browser-frame"
+import type { BrowserNav, FrameResult, SeenTab } from "./browser-frame"
 import { finishTeachingCode, startTeachingCode } from "./teach"
 import type { TeachRecording, TeachSession } from "./teach"
 import type { UserHub } from "./user-hub"
@@ -326,6 +329,10 @@ const CRAWL_PAGE_SIZE = 50
 const MAX_CRAWL_PAGES = 500
 /** Images and PDFs the Files pane and thread can preview. */
 const MAX_FILE_DATA_BYTES = 10 * 1024 * 1024
+/** Browser frames kept for Computer cards; older cards lose their picture. */
+const MAX_BROWSER_FRAMES = 60
+/** A step waits this long for its frame before the card is marked done. */
+const FRAME_TIMEOUT_MS = 8_000
 const ROUTINE_REPORTED_IN_PROMPT = 60
 
 function textOf(message: UIMessage | undefined) {
@@ -462,6 +469,15 @@ function appToolName(connectionId: string, name: string) {
 }
 
 /** MCP results carry text in `content`; an `isError` result becomes a throw. */
+function unescapeHtml(text: string) {
+  return text
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&#x27;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+}
+
 function unwrapToolResult(result: unknown) {
   const r = result as {
     content?: { type: string; text?: string }[]
@@ -672,6 +688,14 @@ export class BotAgent extends Think<Env, BotState> {
     // One row per unprompted message, for the daily cap.
     this.sql`CREATE TABLE IF NOT EXISTS proactive_log (
       at INTEGER NOT NULL
+    )`
+    // The page each browser_execute step ended on, for its Computer card.
+    this.sql`CREATE TABLE IF NOT EXISTS browser_frames (
+      tool_call_id TEXT PRIMARY KEY,
+      at INTEGER NOT NULL,
+      url TEXT NOT NULL,
+      title TEXT NOT NULL,
+      image TEXT NOT NULL
     )`
     this.apps.init()
     // Bots created before proactive work, skills or apps existed.
@@ -1192,6 +1216,21 @@ export class BotAgent extends Think<Env, BotState> {
           return this.waitOrPark(job.command, job.result, id)
         },
       })
+    }
+    // Each browser step ends with a frame of the page it left the bot on.
+    const browse = tools.browser_execute
+    if (browse?.execute) {
+      const run = browse.execute.bind(browse)
+      tools.browser_execute = {
+        ...browse,
+        execute: async (input, options) => {
+          const output = await run(input, options)
+          const id = (options as { toolCallId?: string } | undefined)
+            ?.toolCallId
+          if (id) await this.captureFrame(id)
+          return output
+        },
+      }
     }
     // Apply the user's rules: "ask" pauses the call for an approval card.
     // "block" is enforced in beforeToolCall.
@@ -3966,19 +4005,98 @@ export class BotAgent extends Think<Env, BotState> {
   > {
     const view = await this.browser.connector.liveView({ mode: "tab" })
     if (!view) return []
-    return view.targets
-      .filter((t) => t.type === undefined || t.type === "page")
+    const pages = view.targets.filter(
+      (t) => t.type === undefined || t.type === "page"
+    )
+    // Every session starts with a blank tab the bot never uses. Show it only
+    // when nothing else is open, and put the bot's own tab first.
+    const real = pages.filter((t) => t.pageUrl && t.pageUrl !== "about:blank")
+    const active = this.ctx.storage.kv.get<string>("browser_tab")
+    return (real.length ? real : pages.slice(0, 1))
+      .sort(
+        (a, b) => Number(b.targetId === active) - Number(a.targetId === active)
+      )
       .map((t) => ({
         targetId: t.targetId,
         url: t.url,
         pageUrl: t.pageUrl,
-        title: t.title,
+        // The target listing HTML-escapes titles ("&quot;desk&quot;").
+        title: t.title && unescapeHtml(t.title),
       }))
+  }
+
+  /** The page a browser_execute step ended on, with a JPEG of it. */
+  @callable()
+  async getBrowserFrame(toolCallId: string): Promise<BrowserFrame | null> {
+    const [row] = this.sql<{
+      url: string
+      title: string
+      image: string
+      at: number
+    }>`SELECT url, title, image, at FROM browser_frames
+       WHERE tool_call_id = ${toolCallId}`
+    return row
+      ? {
+          url: row.url,
+          title: row.title,
+          at: row.at,
+          mediaType: "image/jpeg",
+          base64: row.image,
+        }
+      : null
+  }
+
+  /** The back, forward and reload buttons on the user's browser chrome. */
+  @callable()
+  async navigateBrowser(action: BrowserNav): Promise<boolean> {
+    if (!["back", "forward", "reload"].includes(action)) return false
+    const run = await this.browser.runtime.execute({
+      code: navCode(action, this.ctx.storage.kv.get<string>("browser_tab")),
+    })
+    void this.browser.runtime.deleteExecution(run.executionId).catch(() => {})
+    return (
+      run.status === "completed" &&
+      (run.result as { moved?: boolean } | null)?.moved === true
+    )
   }
 
   @callable()
   async closeBrowser() {
     await this.browser.connector.closeSession()
+    this.ctx.storage.kv.delete("browser_tab")
+    this.ctx.storage.kv.delete("browser_tabs")
+  }
+
+  /**
+   * Save the page the bot's tab is on after a browser step. Best effort and
+   * bounded: a missing frame only means the card shows no picture.
+   */
+  private async captureFrame(toolCallId: string) {
+    const seen = this.ctx.storage.kv.get<SeenTab[]>("browser_tabs") ?? []
+    const last = this.ctx.storage.kv.get<string>("browser_tab")
+    try {
+      const run = await Promise.race([
+        this.browser.runtime.execute({ code: frameCode(seen, last) }),
+        new Promise<null>((resolve) =>
+          setTimeout(() => resolve(null), FRAME_TIMEOUT_MS)
+        ),
+      ])
+      if (!run) return
+      void this.browser.runtime.deleteExecution(run.executionId).catch(() => {})
+      if (run.status !== "completed" || !run.result) return
+      const frame = run.result as FrameResult
+      this.ctx.storage.kv.put("browser_tab", frame.targetId)
+      this.ctx.storage.kv.put("browser_tabs", frame.tabs)
+      this.sql`INSERT OR REPLACE INTO browser_frames
+        (tool_call_id, at, url, title, image)
+        VALUES (${toolCallId}, ${Date.now()}, ${frame.url}, ${frame.title},
+                ${frame.data})`
+      this.sql`DELETE FROM browser_frames WHERE tool_call_id NOT IN
+        (SELECT tool_call_id FROM browser_frames ORDER BY at DESC
+         LIMIT ${MAX_BROWSER_FRAMES})`
+    } catch (err) {
+      console.warn("captureFrame failed", err)
+    }
   }
 
   /**

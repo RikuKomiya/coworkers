@@ -14,7 +14,12 @@ import {
 import { AppsPane } from "@/components/apps-pane"
 import { useFileData } from "@/components/capture-card"
 import type { ReadFileData } from "@/components/capture-card"
-import { LiveViewFrame, useLiveView } from "@/components/computer-card"
+import {
+  BrowserChrome,
+  LiveViewFrame,
+  useLiveView,
+} from "@/components/computer-card"
+import type { BrowserNav } from "@/components/computer-card"
 import { CodeBlock, languageForPath } from "@/components/code-block"
 import { EmptyState } from "@/components/empty-state"
 import { Group, RowAction } from "@/components/group"
@@ -40,6 +45,12 @@ function BrowserPane({ agent }: { agent: BotConnection }) {
   const [index, setIndex] = useState(0)
   const [closing, setClosing] = useState(false)
   const tab = tabs?.[Math.min(index, tabs.length - 1)]
+
+  async function navigate(action: BrowserNav) {
+    const moved = await agent.stub.navigateBrowser(action)
+    void refresh()
+    return moved
+  }
 
   async function close() {
     setClosing(true)
@@ -119,9 +130,9 @@ function BrowserPane({ agent }: { agent: BotConnection }) {
           {closing ? <Loader size="sm" /> : <PowerIcon size={16} />}
         </button>
       </div>
-      <p className="truncate px-1 text-xs text-kumo-subtle">{tab.pageUrl}</p>
-      <div className="min-h-0 flex-1 overflow-hidden rounded-2xl bg-white outline outline-1 -outline-offset-1 outline-black/[0.06]">
-        <LiveViewFrame tab={tab} interactive className="h-full" />
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl bg-kumo-base outline outline-1 -outline-offset-1 outline-black/[0.08]">
+        <BrowserChrome pageUrl={tab.pageUrl} onNavigate={navigate} />
+        <LiveViewFrame tab={tab} interactive className="min-h-0 flex-1" />
       </div>
     </div>
   )

@@ -335,6 +335,15 @@ export interface ActivityEntry {
   durationMs: number
 }
 
+/** The page a browser_execute step ended on, for its Computer card. */
+export interface BrowserFrame {
+  url: string
+  title: string
+  at: number
+  mediaType: string
+  base64: string
+}
+
 export const NEW_BOT_NAME = "New bot"
 
 /** Durable Object instance name for a bot. */

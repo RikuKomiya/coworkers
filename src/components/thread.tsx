@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react"
+import { Fragment, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { useHydrated } from "@tanstack/react-router"
 import Markdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -28,10 +28,15 @@ import {
   toBlocks,
   toTurn,
 } from "@/lib/message-parts"
+import { useFollowBottom } from "@/lib/follow-bottom"
 import { NO_UPDATE } from "@/lib/types"
 import type { UIMessage } from "ai"
 import type { ReadFileData } from "@/components/capture-card"
-import type { GetLiveView } from "@/components/computer-card"
+import type {
+  GetBrowserFrame,
+  GetLiveView,
+  NavigateBrowser,
+} from "@/components/computer-card"
 import type { Block, ToolCall } from "@/lib/message-parts"
 import type { BotState } from "@/lib/types"
 
@@ -61,6 +66,8 @@ interface ThreadProps {
   /** For links into the bot's settings (routine cards). */
   botId?: string
   getLiveView?: GetLiveView
+  getBrowserFrame?: GetBrowserFrame
+  navigateBrowser?: NavigateBrowser
   /** Loads screenshots and PDFs the bot saved. Absent before hydration. */
   readFile?: ReadFileData
   onApproval?: OnApproval
@@ -375,6 +382,8 @@ function AssistantMessage({
   botId,
   latestComputerKey,
   getLiveView,
+  getBrowserFrame,
+  navigateBrowser,
   readFile,
   onApproval,
   onProvideSecret,
@@ -388,6 +397,8 @@ function AssistantMessage({
   botId?: string
   latestComputerKey: string | undefined
   getLiveView?: GetLiveView
+  getBrowserFrame?: GetBrowserFrame
+  navigateBrowser?: NavigateBrowser
   readFile?: ReadFileData
   onApproval?: OnApproval
   onProvideSecret?: OnProvideSecret
@@ -439,6 +450,8 @@ function AssistantMessage({
                 latest={block.key === latestComputerKey}
                 carriedOn={index < shown.length - 1}
                 getLiveView={getLiveView}
+                getBrowserFrame={getBrowserFrame}
+                navigateBrowser={navigateBrowser}
                 onApproval={onApproval}
               />
             )
@@ -586,14 +599,15 @@ export function Thread({
   busy,
   botId,
   getLiveView,
+  getBrowserFrame,
+  navigateBrowser,
   readFile,
   onApproval,
   onProvideSecret,
   onAnswerChoice,
   unreadFrom,
 }: ThreadProps) {
-  const scroller = useRef<HTMLDivElement>(null)
-  const pinned = useRef(true)
+  const { scroller, content, onScroll, pin } = useFollowBottom()
   // Messages already present on first render are history: only messages
   // that arrive afterwards get the entrance animation.
   const history = useRef<Set<string> | null>(null)
@@ -642,11 +656,15 @@ export function Thread({
     [rendered]
   )
 
-  // Follow new content unless the user has scrolled up to read.
-  useEffect(() => {
-    const el = scroller.current
-    if (el && pinned.current) el.scrollTop = el.scrollHeight
-  }, [rendered, busy])
+  // Sending a message brings the thread back down, even from far up.
+  const lastMessage = messages.at(-1)
+  const sentId =
+    lastMessage?.role === "user" && isNew(lastMessage.id)
+      ? lastMessage.id
+      : null
+  useLayoutEffect(() => {
+    if (sentId) pin()
+  }, [sentId, pin])
 
   const lastRow = rendered.at(-1)
   const lastBlocks = lastRow?.blocks ?? []
@@ -662,13 +680,13 @@ export function Thread({
   return (
     <div
       ref={scroller}
-      onScroll={(e) => {
-        const el = e.currentTarget
-        pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
-      }}
+      onScroll={onScroll}
       className="min-h-0 flex-1 overflow-y-auto"
     >
-      <div className="mx-auto flex max-w-[820px] flex-col gap-5 px-6 pt-2 pb-8">
+      <div
+        ref={content}
+        className="mx-auto flex max-w-[820px] flex-col gap-5 px-6 pt-2 pb-8"
+      >
         {rendered.map(({ message, blocks, at, durationMs }, index) => (
           <Fragment key={message.id}>
             {message.id === unreadFrom ? (
@@ -703,6 +721,8 @@ export function Thread({
                   botId={botId}
                   latestComputerKey={latestComputerKey}
                   getLiveView={getLiveView}
+                  getBrowserFrame={getBrowserFrame}
+                  navigateBrowser={navigateBrowser}
                   readFile={readFile}
                   onApproval={onApproval}
                   onProvideSecret={onProvideSecret}

@@ -3,8 +3,17 @@ import { Badge } from "@cloudflare/kumo/components/badge"
 import { Button } from "@cloudflare/kumo/components/button"
 import { Dialog } from "@cloudflare/kumo/components/dialog"
 import { Loader } from "@cloudflare/kumo/components/loader"
-import { ArrowClockwiseIcon, ComputerIcon } from "@/components/icons"
+import {
+  ArrowClockwiseIcon,
+  ArrowLeftIcon,
+  ArrowRightIcon,
+  ArrowSquareOutIcon,
+  ComputerIcon,
+  GlobeIcon,
+  LockIcon,
+} from "@/components/icons"
 import type { ToolCall } from "@/lib/message-parts"
+import type { BrowserFrame } from "@/lib/types"
 
 export interface LiveTab {
   targetId: string
@@ -14,10 +23,17 @@ export interface LiveTab {
 }
 
 export type GetLiveView = () => Promise<LiveTab[]>
+export type GetBrowserFrame = (
+  toolCallId: string
+) => Promise<BrowserFrame | null>
+export type BrowserNav = "back" | "forward" | "reload"
+export type NavigateBrowser = (action: BrowserNav) => Promise<boolean>
 
 // Picks up new tabs and page titles. Live View URLs are valid for about
 // five minutes, so a newly seen tab always gets a fresh one.
 const LIVE_VIEW_REFRESH_MS = 60 * 1000
+// While the bot works it may open a tab mid-step: look more often.
+const LIVE_VIEW_WORKING_MS = 4 * 1000
 
 /**
  * Fetch Live View tabs. A tab that is already open keeps its URL, so the
@@ -25,7 +41,11 @@ const LIVE_VIEW_REFRESH_MS = 60 * 1000
  * Live View follows navigation inside the tab by itself. `force` swaps in
  * fresh URLs, for when a stream dropped.
  */
-export function useLiveView(getLiveView: GetLiveView | undefined, on: boolean) {
+export function useLiveView(
+  getLiveView: GetLiveView | undefined,
+  on: boolean,
+  intervalMs = LIVE_VIEW_REFRESH_MS
+) {
   const [tabs, setTabs] = useState<LiveTab[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -52,12 +72,17 @@ export function useLiveView(getLiveView: GetLiveView | undefined, on: boolean) {
   useEffect(() => {
     if (!on) return
     void refresh()
-    const timer = setInterval(() => void refresh(), LIVE_VIEW_REFRESH_MS)
+    const timer = setInterval(() => void refresh(), intervalMs)
     return () => clearInterval(timer)
-  }, [on, refresh])
+  }, [on, refresh, intervalMs])
 
   return { tabs, error, refresh }
 }
+
+// Live View draws its own toolbar (back, forward, reload, address) at the
+// top of the page, and has no option to hide it. The frame is pulled up by
+// its height so BrowserChrome stands in for it.
+const LIVE_VIEW_TOOLBAR_PX = 49
 
 interface LiveViewFrameProps {
   tab: LiveTab
@@ -72,15 +97,163 @@ export function LiveViewFrame({
   className = "",
 }: LiveViewFrameProps) {
   return (
-    <iframe
-      src={tab.url}
-      title={tab.title || tab.pageUrl || "Bot browser"}
-      allow="clipboard-read; clipboard-write"
-      tabIndex={interactive ? 0 : -1}
-      className={`w-full border-0 bg-white ${
-        interactive ? "" : "pointer-events-none"
-      } ${className}`}
-    />
+    <div className={`relative overflow-hidden bg-white ${className}`}>
+      <iframe
+        src={tab.url}
+        title={tab.title || tab.pageUrl || "Bot browser"}
+        allow="clipboard-read; clipboard-write"
+        tabIndex={interactive ? 0 : -1}
+        style={{
+          top: -LIVE_VIEW_TOOLBAR_PX,
+          height: `calc(100% + ${LIVE_VIEW_TOOLBAR_PX}px)`,
+        }}
+        className={`absolute inset-x-0 w-full border-0 bg-white ${
+          interactive ? "" : "pointer-events-none"
+        }`}
+      />
+    </div>
+  )
+}
+
+function splitUrl(pageUrl: string | undefined) {
+  if (!pageUrl || pageUrl === "about:blank") return null
+  try {
+    const url = new URL(pageUrl)
+    const rest = `${url.pathname === "/" ? "" : url.pathname}${url.search}`
+    return {
+      secure: url.protocol === "https:",
+      host: url.host.replace(/^www\./, ""),
+      rest,
+    }
+  } catch {
+    return { secure: false, host: pageUrl, rest: "" }
+  }
+}
+
+function ChromeButton({
+  label,
+  onClick,
+  disabled,
+  children,
+}: {
+  label: string
+  onClick?: () => void
+  disabled?: boolean
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      disabled={disabled || !onClick}
+      onClick={onClick}
+      className="grid size-7 shrink-0 place-items-center rounded-full text-kumo-subtle transition-colors outline-none hover:bg-(--fill-hover) hover:text-kumo-default focus-visible:ring-2 focus-visible:ring-kumo-focus disabled:pointer-events-none disabled:opacity-35"
+    >
+      {children}
+    </button>
+  )
+}
+
+interface BrowserChromeProps {
+  pageUrl?: string
+  /** Back, forward and reload; left out where they would do nothing. */
+  onNavigate?: NavigateBrowser
+  /** The bot is driving: the buttons show but do not take input. */
+  locked?: boolean
+  /** Opens the page in the user's own browser. */
+  openable?: boolean
+  /** Extra controls at the right end of the bar. */
+  children?: React.ReactNode
+}
+
+/** A quiet browser toolbar over the bot's page: buttons and an address pill. */
+export function BrowserChrome({
+  pageUrl,
+  onNavigate,
+  locked = false,
+  openable = false,
+  children,
+}: BrowserChromeProps) {
+  const [busy, setBusy] = useState<BrowserNav | null>(null)
+  const parts = splitUrl(pageUrl)
+
+  async function go(action: BrowserNav) {
+    if (!onNavigate) return
+    setBusy(action)
+    try {
+      await onNavigate(action)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const disabled = locked || busy !== null
+  const hint = locked ? " (the bot is using the browser)" : ""
+  return (
+    <div className="flex h-11 items-center gap-1 border-b border-kumo-line bg-kumo-base px-2">
+      {onNavigate ? (
+        <>
+          <ChromeButton
+            label={`Back${hint}`}
+            disabled={disabled}
+            onClick={() => void go("back")}
+          >
+            <ArrowLeftIcon size={16} />
+          </ChromeButton>
+          <ChromeButton
+            label={`Forward${hint}`}
+            disabled={disabled}
+            onClick={() => void go("forward")}
+          >
+            <ArrowRightIcon size={16} />
+          </ChromeButton>
+          <ChromeButton
+            label={`Reload${hint}`}
+            disabled={disabled}
+            onClick={() => void go("reload")}
+          >
+            <ArrowClockwiseIcon
+              size={15}
+              className={busy === "reload" ? "animate-spin" : ""}
+            />
+          </ChromeButton>
+        </>
+      ) : null}
+      <div
+        className="mx-1 flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-full bg-kumo-recessed px-3 text-[13px]"
+        title={pageUrl}
+      >
+        {parts?.secure ? (
+          <LockIcon size={12} className="shrink-0 text-kumo-subtle" />
+        ) : (
+          <GlobeIcon size={12} className="shrink-0 text-kumo-subtle" />
+        )}
+        <span className="min-w-0 truncate">
+          {parts ? (
+            <>
+              <span className="text-kumo-default">{parts.host}</span>
+              <span className="text-kumo-subtle">{parts.rest}</span>
+            </>
+          ) : (
+            <span className="text-kumo-subtle">New tab</span>
+          )}
+        </span>
+      </div>
+      {openable && parts ? (
+        <a
+          href={pageUrl}
+          target="_blank"
+          rel="noreferrer"
+          aria-label="Open this page in a new tab"
+          title="Open this page in a new tab"
+          className="grid size-7 shrink-0 place-items-center rounded-full text-kumo-subtle transition-colors outline-none hover:bg-(--fill-hover) hover:text-kumo-default focus-visible:ring-2 focus-visible:ring-kumo-focus"
+        >
+          <ArrowSquareOutIcon size={15} />
+        </a>
+      ) : null}
+      {children}
+    </div>
   )
 }
 
@@ -97,20 +270,33 @@ function cardStatus(calls: ToolCall[], carriedOn: boolean): CardStatus {
   return "done"
 }
 
-function pageLabel(tab: LiveTab | undefined) {
-  if (tab?.title) return tab.title
-  if (!tab?.pageUrl || tab.pageUrl === "about:blank") return ""
+function hostOf(pageUrl: string | undefined) {
+  if (!pageUrl || pageUrl === "about:blank") return ""
   try {
-    const url = new URL(tab.pageUrl)
+    return new URL(pageUrl).host.replace(/^www\./, "")
+  } catch {
+    return ""
+  }
+}
+
+function pageLabel(page: { title?: string; pageUrl?: string } | undefined) {
+  if (!page?.pageUrl || page.pageUrl === "about:blank") return ""
+  if (page.title && page.title !== page.pageUrl) return page.title
+  try {
+    const url = new URL(page.pageUrl)
     return `${url.host}${url.pathname === "/" ? "" : url.pathname}`
   } catch {
-    return tab.pageUrl
+    return page.pageUrl
   }
 }
 
 /** One line for the card: where the bot is and how far it got. */
-function describe(status: CardStatus, steps: number, tab?: LiveTab) {
-  const where = pageLabel(tab)
+function describe(
+  status: CardStatus,
+  steps: number,
+  page?: { title?: string; pageUrl?: string }
+) {
+  const where = pageLabel(page)
   const count = `${steps} ${steps === 1 ? "step" : "steps"}`
   switch (status) {
     case "working":
@@ -150,6 +336,89 @@ function StatusChip({ status }: { status: CardStatus }) {
   }
 }
 
+interface Frame {
+  url: string
+  title: string
+  src: string
+}
+
+/**
+ * The page each finished browser_execute step ended on, in call order. A
+ * step's frame is saved before its result comes back, so one fetch each.
+ */
+function useFrames(
+  calls: ToolCall[],
+  getBrowserFrame: GetBrowserFrame | undefined
+) {
+  const [frames, setFrames] = useState<Record<string, Frame | null>>({})
+  const ready = calls.filter(
+    (c) => c.name === "browser_execute" && c.state === "done"
+  )
+  const missing = ready
+    .map((c) => c.id)
+    .filter((id) => !(id in frames))
+    .join(",")
+
+  useEffect(() => {
+    if (!getBrowserFrame || !missing) return
+    let cancelled = false
+    for (const id of missing.split(",")) {
+      getBrowserFrame(id)
+        .catch(() => null)
+        .then((frame) => {
+          if (cancelled) return
+          setFrames((prev) => ({
+            ...prev,
+            [id]: frame
+              ? {
+                  url: frame.url,
+                  title: frame.title,
+                  src: `data:${frame.mediaType};base64,${frame.base64}`,
+                }
+              : null,
+          }))
+        })
+    }
+    return () => {
+      cancelled = true
+    }
+  }, [getBrowserFrame, missing])
+
+  return ready.flatMap((c) => (frames[c.id] ? [frames[c.id]!] : []))
+}
+
+/** The sites the bot went through, in order, without repeats in a row. */
+function Trail({ frames }: { frames: Frame[] }) {
+  const hosts = frames
+    .map((f) => hostOf(f.url))
+    .filter((host, i, all) => host && host !== all[i - 1])
+  if (hosts.length < 2) return null
+  return (
+    <p
+      className="mt-1 truncate text-[13px] text-kumo-subtle"
+      title={hosts.join(" → ")}
+    >
+      {hosts.join(" → ")}
+    </p>
+  )
+}
+
+function FrameImage({
+  frame,
+  className = "",
+}: {
+  frame: Frame
+  className?: string
+}) {
+  return (
+    <img
+      src={frame.src}
+      alt={`The bot's browser on ${pageLabel({ title: frame.title, pageUrl: frame.url })}`}
+      className={`block w-full bg-white object-cover object-top ${className}`}
+    />
+  )
+}
+
 interface ComputerCardProps {
   calls: ToolCall[]
   /** Only the most recent card in a thread shows the live browser. */
@@ -157,35 +426,51 @@ interface ComputerCardProps {
   /** More of the reply follows this card. */
   carriedOn?: boolean
   getLiveView?: GetLiveView
+  getBrowserFrame?: GetBrowserFrame
+  navigateBrowser?: NavigateBrowser
   onApproval?: (approvalId: string, approved: boolean, reason?: string) => void
 }
 
-/** Inline card for browser work: status chip, live preview, take over. */
+/**
+ * Inline card for browser work. While the bot works it streams Live View of
+ * the bot's tab; once a step is over it shows the frame that step ended on,
+ * which stays put even after the tab or the session is gone.
+ */
 export function ComputerCard({
   calls,
   latest,
   carriedOn = false,
   getLiveView,
+  getBrowserFrame,
+  navigateBrowser,
   onApproval,
 }: ComputerCardProps) {
   const status = cardStatus(calls, carriedOn)
   const handoff = calls.findLast((c) => c.name === "request_handoff")
   const waiting = calls.find((c) => c.state === "waiting")
-  const showPreview = latest && status !== "failed" && status !== "skipped"
-  const { tabs, refresh } = useLiveView(getLiveView, showPreview)
+  const active = status === "working" || status === "action_needed"
+  const live = latest && active
+  const { tabs, refresh } = useLiveView(
+    getLiveView,
+    live,
+    status === "working" ? LIVE_VIEW_WORKING_MS : undefined
+  )
+  const frames = useFrames(calls, getBrowserFrame)
+  const frame = frames.at(-1)
   const [takingOver, setTakingOver] = useState(false)
-  // The newest tab is the one the bot is working in.
-  const tab = tabs?.at(-1)
+  // The server lists the bot's own tab first.
+  const tab = live ? tabs?.[0] : undefined
+  const page = tab ?? (frame && { title: frame.title, pageUrl: frame.url })
   const instructions =
     typeof handoff?.input.instructions === "string" &&
     (status === "action_needed" || calls.at(-1) === handoff)
       ? handoff.input.instructions
-      : describe(status, calls.length, tab)
+      : describe(status, calls.length, page)
 
   // Pick up the page the bot just navigated to.
   useEffect(() => {
-    if (showPreview) void refresh()
-  }, [calls.length, status, showPreview, refresh])
+    if (live) void refresh()
+  }, [calls.length, status, live, refresh])
 
   function respond(approved: boolean) {
     if (waiting?.approvalId) {
@@ -198,6 +483,34 @@ export function ComputerCard({
     setTakingOver(false)
   }
 
+  // The buttons drive the live tab. While the bot works they show but stay
+  // locked; a finished card has a picture, so it only offers to open the page.
+  const navigate =
+    tab && navigateBrowser
+      ? async (action: BrowserNav) => {
+          const moved = await navigateBrowser(action)
+          void refresh()
+          return moved
+        }
+      : undefined
+  const chrome = (
+    <BrowserChrome
+      pageUrl={page?.pageUrl}
+      onNavigate={navigate}
+      locked={status === "working"}
+      openable={!tab}
+    />
+  )
+
+  // Live while working; the last frame once done. A finished card with no
+  // frame (nothing but blank tabs, or a capture failed) is just its header.
+  const preview = tab ? (
+    <LiveViewFrame tab={tab} className="aspect-[16/10]" />
+  ) : frame ? (
+    <FrameImage frame={frame} className="aspect-[16/10]" />
+  ) : null
+  const showPlaceholder = live && !preview
+
   return (
     <div className="w-full max-w-[640px] rounded-3xl bg-kumo-tint p-4">
       <div className="flex items-center justify-between gap-3">
@@ -207,32 +520,28 @@ export function ComputerCard({
         <StatusChip status={status} />
       </div>
       <p className="mt-1 text-[15px] text-kumo-default">{instructions}</p>
+      <Trail frames={frames} />
 
-      {/* A finished card only keeps its preview while the browser is still
-          open; otherwise it collapses to its header. */}
-      {showPreview && (status !== "done" || tab) ? (
-        <div className="mt-3 overflow-hidden rounded-lg bg-kumo-recessed outline outline-1 -outline-offset-1 outline-black/[0.06]">
-          {tab ? (
+      {preview || showPlaceholder ? (
+        <div className="mt-3 overflow-hidden rounded-2xl bg-kumo-base shadow-[0_1px_3px_rgba(0,0,0,0.05)] outline outline-1 -outline-offset-1 outline-black/[0.08]">
+          {chrome}
+          {preview ? (
             <button
               type="button"
-              aria-label="Watch the browser"
+              aria-label={tab ? "Watch the browser" : "View the last page"}
               onClick={() => setTakingOver(true)}
               className="block w-full cursor-zoom-in"
             >
-              <LiveViewFrame tab={tab} className="aspect-[16/10]" />
+              {preview}
             </button>
           ) : (
-            <div className="flex aspect-[16/10] flex-col items-center justify-center gap-2 text-sm text-kumo-subtle">
+            <div className="flex aspect-[16/10] flex-col items-center justify-center gap-2 bg-kumo-recessed text-sm text-kumo-subtle">
               {tabs === null ? (
                 <Loader />
               ) : (
                 <>
                   <ComputerIcon size={28} />
-                  <span>
-                    {status === "done"
-                      ? "The browser session has closed."
-                      : "Waiting for the browser…"}
-                  </span>
+                  <span>Waiting for the browser…</span>
                   <Button
                     size="sm"
                     variant="ghost"
@@ -304,17 +613,24 @@ export function ComputerCard({
           <Dialog.Description className="sr-only">
             {status === "action_needed"
               ? "You are controlling the bot's browser. Anything you type goes straight to the page and is not shown to the bot."
-              : "A live view of the bot's browser. It is view only while the bot works."}
+              : tab
+                ? "A live view of the bot's browser. It is view only while the bot works."
+                : "The page the bot's browser was on when it finished."}
           </Dialog.Description>
-          <div className="min-h-0 flex-1 overflow-hidden rounded-2xl border border-kumo-line bg-kumo-recessed">
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl bg-kumo-base outline outline-1 -outline-offset-1 outline-black/[0.08]">
+            {chrome}
             {tab ? (
               <LiveViewFrame
                 tab={tab}
                 interactive={status === "action_needed"}
-                className="h-full"
+                className="min-h-0 flex-1"
               />
+            ) : frame && !active ? (
+              <div className="min-h-0 flex-1 overflow-auto">
+                <FrameImage frame={frame} />
+              </div>
             ) : (
-              <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-kumo-subtle">
+              <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 bg-kumo-recessed text-sm text-kumo-subtle">
                 <span>The browser isn't reachable right now.</span>
                 <Button
                   size="sm"

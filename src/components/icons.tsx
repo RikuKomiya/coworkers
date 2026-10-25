@@ -6,6 +6,7 @@ import {
   ArrowDown01Icon as ChevronDown,
   ArrowLeft02Icon as ArrowLeft,
   ArrowRight01Icon as ChevronRight,
+  ArrowRight02Icon as ArrowRight,
   ArrowUp02Icon as ArrowUp,
   Attachment01Icon as Attachment,
   BookOpen01Icon as BookOpen,
@@ -24,6 +25,7 @@ import {
   FileZipIcon as FileZip,
   Globe02Icon as Globe,
   Image01Icon as Image,
+  LockIcon as Lock,
   Pdf01Icon as Pdf,
   WebDesign01Icon as WebDesign,
   LeftToRightListBulletIcon as ListBullet,
@@ -37,6 +39,7 @@ import {
   Refresh01Icon as Refresh,
   RepeatIcon as Repeat,
   Search01Icon as Search,
+  SearchList02Icon as SearchList,
   Settings03Icon as Settings,
   PanelLeft as SidebarLeft,
   StopIcon as Stop,
@@ -76,6 +79,7 @@ function icon(svg: IconSvgElement, name: string) {
 export const AppWindowIcon = icon(AppWindow, "AppWindowIcon")
 export const ArrowClockwiseIcon = icon(Refresh, "ArrowClockwiseIcon")
 export const ArrowLeftIcon = icon(ArrowLeft, "ArrowLeftIcon")
+export const ArrowRightIcon = icon(ArrowRight, "ArrowRightIcon")
 export const ArrowSquareOutIcon = icon(LinkSquare, "ArrowSquareOutIcon")
 export const ArrowUpIcon = icon(ArrowUp, "ArrowUpIcon")
 export const ArrowsClockwiseIcon = icon(Repeat, "ArrowsClockwiseIcon")
@@ -102,9 +106,11 @@ export const EyeIcon = icon(View, "EyeIcon")
 export const GearSixIcon = icon(Settings, "GearSixIcon")
 export const GlobeIcon = icon(Globe, "GlobeIcon")
 export const ImageIcon = icon(Image, "ImageIcon")
+export const LockIcon = icon(Lock, "LockIcon")
 export const ListBulletsIcon = icon(ListBullet, "ListBulletsIcon")
 export const MessageIcon = icon(Message, "MessageIcon")
 export const MagnifyingGlassIcon = icon(Search, "MagnifyingGlassIcon")
+export const SearchListIcon = icon(SearchList, "SearchListIcon")
 export const ComputerIcon = icon(AiBrowser, "ComputerIcon")
 export const PaperclipIcon = icon(Attachment, "PaperclipIcon")
 export const PlugsConnectedIcon = icon(Plug, "PlugsConnectedIcon")

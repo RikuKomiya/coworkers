@@ -349,6 +349,10 @@ export function describeCall(call: ToolCall): string {
       return "Cancelled a routine"
     case "search_context":
       return "Searched memory"
+    case "search_history":
+      return `Searched history for "${str("query")}"`
+    case "read_history":
+      return "Read earlier messages"
     case "update_item":
       return "Updated an open item"
     case "start_teaching":
@@ -377,6 +381,7 @@ export type StepKind =
   | "shell"
   | "files"
   | "search"
+  | "history"
   | "web"
   | "memory"
   | "routine"
@@ -397,6 +402,9 @@ export function stepKind(call: ToolCall): StepKind {
     case "find":
     case "grep":
       return "search"
+    case "search_history":
+    case "read_history":
+      return "history"
     case "search_context":
       return "memory"
     case "schedule_routine":
@@ -433,6 +441,8 @@ export function describeGroup(kind: StepKind, calls: ToolCall[]): string {
         : `Read ${n} files`
     case "search":
       return `Searched ${n} times`
+    case "history":
+      return `Looked back through history ${n} times`
     case "web":
       return `Visited ${n} pages`
     default:
