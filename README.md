@@ -7,6 +7,10 @@ You create bots, give each one a job, and they work for you, even when
 you're away. They ask before doing anything risky. When one needs a login,
 it hands you its browser.
 
+> [!WARNING]
+> Bots is still under heavy development and is experimental. Use it with
+> caution.
+
 > [!NOTE]
 > `@cloudflare/think`, `@cloudflare/computer`, the `cf` CLI and the
 > Cloudflare Vite plugin 2.0 are preview or beta. Expect breaking changes.
