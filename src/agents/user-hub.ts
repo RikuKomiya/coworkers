@@ -145,12 +145,14 @@ export class UserHub extends Agent<Env, HubState> {
 
   @callable()
   async deleteBot(botId: string) {
-    const bot = await this.bot(botId)
-    await bot.destroy()
+    // Drop it from the directory first: `destroy()` aborts the bot's isolate,
+    // so the RPC usually rejects even when the teardown went through.
     this.setState({
       ...this.state,
       bots: this.state.bots.filter((b) => b.id !== botId),
     })
+    const bot = await this.bot(botId)
+    await bot.destroy().catch(() => {})
   }
 
   @callable()
