@@ -7,7 +7,7 @@ TanStack Start, for Workers, and especially for the `cf` CLI.
 
 ## This project: Coworkers
 
-Coworkers is a multi-bot "AI teammates" app (spec: `product.md`). Each bot is a
+Coworkers is a multi-bot "AI teammates" app. Each bot is a
 Durable Object with its own chat, memory, routines, computer and browser.
 
 | Piece         | Where                                                                        | Notes                                                                                                                                                               |

@@ -331,7 +331,6 @@ src/
 installer/            "Deploy to Cloudflare" wizard (its own Worker)
 scripts/setup.ts      the same deploy, from your terminal with cf
 cloudflare.config.ts  Worker config and bindings
-product.md            full product spec
 AGENTS.md             read this first if you're an AI coding agent
 ```
 
