@@ -106,7 +106,6 @@ export function ApprovalPopover({
               ) : null}
               <div className="flex gap-2">
                 <Button
-                  size="sm"
                   variant="primary"
                   className="btn-ink rounded-full"
                   disabled={answering !== null}
@@ -116,7 +115,6 @@ export function ApprovalPopover({
                   Approve
                 </Button>
                 <Button
-                  size="sm"
                   variant="outline"
                   className="rounded-full"
                   disabled={answering !== null}
