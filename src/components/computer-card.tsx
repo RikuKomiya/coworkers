@@ -225,7 +225,7 @@ export function BrowserChrome({
         </>
       ) : null}
       <div
-        className="mx-1 flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-full bg-kumo-recessed px-3 text-[13px]"
+        className="ml-1 flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-full bg-kumo-recessed px-3 text-[13px]"
         title={pageUrl}
       >
         {parts?.secure ? (
