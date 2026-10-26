@@ -3022,6 +3022,40 @@ export class BotAgent extends Think<Env, BotState> {
     this.ctx.storage.kv.put(`choice:${toolCallId}`, option)
   }
 
+  /** The newest reply's parts that wait on the user, for the sidebar. */
+  waitingParts(): UIMessage | null {
+    const message = this.messages.findLast((m) => m.role === "assistant")
+    if (!message) return null
+    const parts = message.parts.filter((p) => pendingApprovalId(p))
+    return parts.length ? { ...message, parts } : null
+  }
+
+  /**
+   * Answer an approval card from outside the chat (the sidebar). Same path
+   * Think takes for an approval resolved without a chat socket; the
+   * continuation waits until every card in the reply is answered.
+   */
+  async answerApproval(approvalId: string, approved: boolean) {
+    const part = this.messages
+      .flatMap((m) => m.parts)
+      .find((p) => pendingApprovalId(p) === approvalId) as
+      { toolCallId?: string } | undefined
+    if (!part?.toolCallId) throw new Error("That was already answered.")
+    const { toolCallId } = part
+    // Think keeps these private; they are its RPC approval path.
+    const think = this as unknown as {
+      _enqueueInteractionApply(apply: () => Promise<void>): Promise<unknown>
+      _applyToolApproval(toolCallId: string, approved: boolean): Promise<void>
+      _queueConnectionlessContinuation(): Promise<void>
+    }
+    await think._enqueueInteractionApply(() =>
+      think._applyToolApproval(toolCallId, approved)
+    )
+    if (!this.hasPendingApproval()) {
+      await think._queueConnectionlessContinuation()
+    }
+  }
+
   private hasPendingApproval() {
     return this.messages.some(
       (m) => m.role === "assistant" && m.parts.some((p) => pendingApprovalId(p))

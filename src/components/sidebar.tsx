@@ -16,6 +16,7 @@ import {
   MagnifyingGlassIcon,
   PlusIcon,
 } from "@/components/icons"
+import { ApprovalPopover } from "@/components/approval-popover"
 import { BotAvatar } from "@/components/bot-avatar"
 import { ShimmerText } from "@/components/shimmer-text"
 import { useHub } from "@/lib/hub-context"
@@ -113,7 +114,8 @@ function initials(label: string) {
 function BotRow({ bot, active }: { bot: BotSummary; active: boolean }) {
   // The server does not know the viewer's time zone or locale.
   const hydrated = useHydrated()
-  return (
+  const { live } = useHub()
+  const row = (
     <Link
       to="/bots/$botId"
       params={{ botId: bot.id }}
@@ -157,6 +159,12 @@ function BotRow({ bot, active }: { bot: BotSummary; active: boolean }) {
         )}
       </span>
     </Link>
+  )
+  // The open chat shows its own cards.
+  return bot.status === "action_needed" && !active && live ? (
+    <ApprovalPopover bot={bot}>{row}</ApprovalPopover>
+  ) : (
+    row
   )
 }
 

@@ -48,6 +48,17 @@ interface ApprovalResponse {
   reason?: string
 }
 
+/** A tool in the newest reply is still running, so its step is not over. */
+function stepRunning(messages: UIMessage[]) {
+  const last = messages.at(-1)
+  if (last?.role !== "assistant") return false
+  return last.parts.some(
+    (p) =>
+      "state" in p &&
+      (p.state === "input-streaming" || p.state === "input-available")
+  )
+}
+
 export const Route = createFileRoute("/_app/bots/$botId")({
   loader: async ({ params }) => {
     const snapshot = await getBotSnapshot({ data: params.botId })
@@ -278,23 +289,27 @@ function LiveBot({
   // The model can ask (ask_user, a hand-off, an approval) in the same step
   // as a tool that is still running. Answering then makes the server go on
   // mid-stream, and the client loses that tool's result ("No tool invocation
-  // found"). Hold answers until the step is over.
-  const busyRef = useRef(busy)
-  busyRef.current = busy
+  // found"). Hold answers until the step is over. Only a running tool holds
+  // them: after the first of several approvals the chat is busy waiting for
+  // the server, which waits for the rest, so holding on `busy` deadlocks.
+  const holding = busy && stepRunning(chat.messages)
+  const holdingRef = useRef(holding)
+  holdingRef.current = holding
   const heldAnswers = useRef(new Map<string, ApprovalResponse>())
   const onApproval = useCallback<OnApproval>(
     (id, approved, reason) => {
-      if (busyRef.current) heldAnswers.current.set(id, { id, approved, reason })
-      else void chat.addToolApprovalResponse({ id, approved, reason })
+      if (holdingRef.current) {
+        heldAnswers.current.set(id, { id, approved, reason })
+      } else void chat.addToolApprovalResponse({ id, approved, reason })
     },
     [chat]
   )
   useEffect(() => {
-    if (busy || heldAnswers.current.size === 0) return
+    if (holding || heldAnswers.current.size === 0) return
     const answers = [...heldAnswers.current.values()]
     heldAnswers.current.clear()
     for (const answer of answers) void chat.addToolApprovalResponse(answer)
-  }, [busy, chat])
+  }, [holding, chat])
 
   const onProvideSecret = useCallback(
     (toolCallId: string, value: string) =>

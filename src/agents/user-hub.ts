@@ -168,6 +168,21 @@ export class UserHub extends Agent<Env, HubState> {
     }
   }
 
+  /** A bot's unanswered cards, for answering them from the sidebar. */
+  @callable()
+  async waitingParts(botId: string) {
+    if (!this.state.bots.some((b) => b.id === botId)) return null
+    return (await this.bot(botId)).waitingParts()
+  }
+
+  @callable()
+  async answerApproval(botId: string, approvalId: string, approved: boolean) {
+    if (!this.state.bots.some((b) => b.id === botId)) {
+      throw new Error("No such bot.")
+    }
+    await (await this.bot(botId)).answerApproval(approvalId, approved)
+  }
+
   @callable()
   async addConnection(input: {
     name: string

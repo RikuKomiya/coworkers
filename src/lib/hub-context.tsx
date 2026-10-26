@@ -1,6 +1,7 @@
 import { createContext, useContext, useMemo } from "react"
 import { useAgent } from "agents/react"
 import type { ReactNode } from "react"
+import type { UIMessage } from "ai"
 import type {
   BotSummary,
   Connection,
@@ -25,6 +26,13 @@ interface HubContextValue {
   createBot: () => Promise<BotSummary>
   deleteBot: (botId: string) => Promise<void>
   markRead: (botId: string) => void
+  /** A bot's newest reply, cut to the parts that wait on the user. */
+  waitingParts: (botId: string) => Promise<UIMessage | null>
+  answerApproval: (
+    botId: string,
+    approvalId: string,
+    approved: boolean
+  ) => Promise<void>
   addConnection: (input: NewConnection) => Promise<Connection>
   removeConnection: (connectionId: string) => Promise<void>
   refreshConnections: () => void
@@ -94,6 +102,8 @@ export function StaticHubProvider({
       createBot: notConnected,
       deleteBot: notConnected,
       markRead: () => {},
+      waitingParts: notConnected,
+      answerApproval: notConnected,
       addConnection: notConnected,
       removeConnection: notConnected,
       refreshConnections: () => {},
@@ -123,6 +133,9 @@ export function LiveHubProvider({ viewer, initial, children }: ProviderProps) {
       createBot: () => agent.stub.createBot(),
       deleteBot: (botId) => agent.stub.deleteBot(botId),
       markRead: (botId) => void agent.stub.markRead(botId),
+      waitingParts: (botId) => agent.stub.waitingParts(botId),
+      answerApproval: (botId, approvalId, approved) =>
+        agent.stub.answerApproval(botId, approvalId, approved),
       addConnection: (input) => agent.stub.addConnection(input),
       removeConnection: (id) => agent.stub.removeConnection(id),
       refreshConnections: () => void agent.stub.refreshConnections(),
