@@ -527,7 +527,9 @@ export function ComputerCard({
       ) : null}
 
       {preview || showPlaceholder ? (
-        <div className="overflow-hidden rounded-2xl bg-kumo-base shadow-[0_1px_3px_rgba(0,0,0,0.05)] outline outline-1 -outline-offset-1 outline-black/[0.08]">
+        <div className="relative overflow-hidden rounded-2xl bg-kumo-base shadow-[0_1px_3px_rgba(0,0,0,0.05)] after:pointer-events-none after:absolute after:inset-0 after:z-10 after:rounded-2xl after:outline after:outline-1 after:-outline-offset-1 after:outline-black/[0.08]">
+          {/* The edge is an overlay: the frame below is positioned and would
+              paint over a plain outline, leaving it around the toolbar only. */}
           {chrome}
           {preview ? (
             <button
@@ -623,7 +625,7 @@ export function ComputerCard({
                 ? "A live view of the bot's browser. It is view only while the bot works."
                 : "The page the bot's browser was on when it finished."}
           </Dialog.Description>
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl bg-kumo-base outline outline-1 -outline-offset-1 outline-black/[0.08]">
+          <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl bg-kumo-base after:pointer-events-none after:absolute after:inset-0 after:z-10 after:rounded-2xl after:outline after:outline-1 after:-outline-offset-1 after:outline-black/[0.08]">
             {chrome}
             {tab ? (
               <LiveViewFrame
