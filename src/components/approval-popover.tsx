@@ -92,7 +92,8 @@ export function ApprovalPopover({
             <Loader size="sm" />
           </div>
         ) : null}
-        <div className="flex max-h-[60vh] flex-col gap-3 overflow-y-auto">
+        {/* Bottom padding keeps the buttons' rings inside the scroller. */}
+        <div className="flex max-h-[60vh] flex-col gap-3 overflow-y-auto pb-1">
           {waiting?.calls.map((call) => (
             <div key={call.id} className="flex flex-col gap-2 pt-2">
               <p className="text-sm text-kumo-default">{describeCall(call)}</p>
