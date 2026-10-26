@@ -84,6 +84,10 @@ export function useLiveView(
 // its height so BrowserChrome stands in for it.
 const LIVE_VIEW_TOOLBAR_PX = 49
 
+// Live View letterboxes the remote window on a grey page, so the card takes
+// the window's shape (measured from Browser Run) to leave no grey edges.
+const FRAME_ASPECT = "aspect-[1411/892]"
+
 interface LiveViewFrameProps {
   tab: LiveTab
   /** Preview frames ignore input; the take-over modal passes `true`. */
@@ -496,9 +500,9 @@ export function ComputerCard({
   // Live while working; the last frame once done. A finished card with no
   // frame (nothing but blank tabs, or a capture failed) is just its header.
   const preview = tab ? (
-    <LiveViewFrame tab={tab} className="aspect-[16/10]" />
+    <LiveViewFrame tab={tab} className={FRAME_ASPECT} />
   ) : frame ? (
-    <FrameImage frame={frame} className="aspect-[16/10]" />
+    <FrameImage frame={frame} className={FRAME_ASPECT} />
   ) : null
   const showPlaceholder = live && !preview
 
@@ -535,7 +539,9 @@ export function ComputerCard({
               {preview}
             </button>
           ) : (
-            <div className="flex aspect-[16/10] flex-col items-center justify-center gap-2 bg-kumo-recessed text-sm text-kumo-subtle">
+            <div
+              className={`flex ${FRAME_ASPECT} flex-col items-center justify-center gap-2 bg-kumo-recessed text-sm text-kumo-subtle`}
+            >
               {tabs === null ? (
                 <Loader />
               ) : (
