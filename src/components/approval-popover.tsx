@@ -92,8 +92,9 @@ export function ApprovalPopover({
             <Loader size="sm" />
           </div>
         ) : null}
-        {/* Bottom padding keeps the buttons' rings inside the scroller. */}
-        <div className="flex max-h-[60vh] flex-col gap-3 overflow-y-auto pb-1">
+        {/* Padding keeps the buttons' rings inside the scroller; the
+            negative margin keeps the content aligned with the title. */}
+        <div className="-mx-1 flex max-h-[60vh] flex-col gap-3 overflow-y-auto px-1 pb-2">
           {waiting?.calls.map((call) => (
             <div key={call.id} className="flex flex-col gap-2 pt-2">
               <p className="text-sm text-kumo-default">{describeCall(call)}</p>
@@ -106,6 +107,7 @@ export function ApprovalPopover({
               ) : null}
               <div className="flex gap-2">
                 <Button
+                  size="sm"
                   variant="primary"
                   className="btn-ink rounded-full"
                   disabled={answering !== null}
@@ -115,6 +117,7 @@ export function ApprovalPopover({
                   Approve
                 </Button>
                 <Button
+                  size="sm"
                   variant="outline"
                   className="rounded-full"
                   disabled={answering !== null}
