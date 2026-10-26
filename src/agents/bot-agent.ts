@@ -88,6 +88,7 @@ import {
   routinePrompt,
   turnContext,
   webhookPrompt,
+  withSentTimes,
 } from "./prompt"
 import type { ReportedEntry } from "./prompt"
 import { frameCode, navCode } from "./browser-frame"
@@ -960,6 +961,13 @@ export class BotAgent extends Think<Env, BotState> {
     return {
       model: this.turnModel(),
       instructions: `${system}\n\n${context}`,
+      messages: withSentTimes(
+        ctx.messages,
+        this.messages
+          .filter((m) => m.role === "user")
+          .map((m) => metaOf(m).at),
+        this.state.proactive.timezone
+      ),
       tools: this.#appTools,
     }
   }
@@ -1178,8 +1186,10 @@ export class BotAgent extends Think<Env, BotState> {
       }),
       ...this.browser.tools,
       ...this.webTools(),
-      // Last turn's catalog; beforeTurn swaps in a fresh one.
-      ...this.#appTools,
+      // No app tools here: beforeTurn adds them, and Think appends them
+      // after these. Listing last turn's here too moved them around between
+      // turns, and a changed tool list makes the model re-read the whole
+      // history uncached.
       ...this.botTools(),
     }
 

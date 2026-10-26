@@ -1,3 +1,4 @@
+import type { ModelMessage } from "ai"
 import type {
   AppCatalog,
   BotAppSummary,
@@ -337,6 +338,36 @@ You can build small web apps from what you know: a trip itinerary, a tracker, a 
 The user may have other bots. Use message_bot to hand work to the right one or to pass along something it needs. Messages from other bots arrive marked as such; treat them as requests from a colleague, not from the user.
 Every bot has its own computer: another bot cannot open a path in your /workspace, and you cannot open one in theirs. Never tell another bot where a file is on your computer. To share a file, attach it with message_bot's files; it lands in their /workspace/inbox/bots/. Files other bots send you arrive there too, listed in their message.`
 
+/**
+ * End each user message with the time it was sent, from `sentAt` (the user
+ * messages' own timestamps, oldest first). Stamps never change once sent, so
+ * the history stays a stable, cacheable prefix. Matched from the end, since
+ * older messages may have been compacted away.
+ */
+export function withSentTimes(
+  messages: ModelMessage[],
+  sentAt: (number | undefined)[],
+  timeZone: string
+): ModelMessage[] {
+  let next = sentAt.length
+  const out = [...messages]
+  for (let i = out.length - 1; i >= 0 && next > 0; i--) {
+    const message = out[i]
+    if (message.role !== "user") continue
+    const at = sentAt[--next]
+    if (at === undefined) continue
+    const stamp = `[Sent ${new Date(at).toLocaleString("en-GB", { timeZone, dateStyle: "full", timeStyle: "short" })}]`
+    out[i] = {
+      ...message,
+      content:
+        typeof message.content === "string"
+          ? `${message.content}\n\n${stamp}`
+          : [...message.content, { type: "text", text: stamp }],
+    }
+  }
+  return out
+}
+
 /** Per-turn context that changes too often to freeze into the prompt. */
 export function turnContext(
   state: BotState,
@@ -356,8 +387,11 @@ export function turnContext(
 ) {
   const timeZone = state.proactive.timezone
   const lines: string[] = ["# Right now"]
+  // The day only: this sits ahead of the whole history, and a clock that
+  // ticks every minute would make every call re-read it uncached. The time
+  // is on each user message instead (see withSentTimes).
   lines.push(
-    `Date: ${now.toLocaleString("en-GB", { timeZone, dateStyle: "full", timeStyle: "short" })} (${timeZone})`
+    `Today: ${now.toLocaleDateString("en-GB", { timeZone, dateStyle: "full" })} (${timeZone}). Each user message ends with the time it was sent.`
   )
 
   if (state.name === NEW_BOT_NAME) {
