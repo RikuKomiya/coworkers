@@ -14,6 +14,7 @@ import {
   BellSlashIcon,
   GearSixIcon,
   MagnifyingGlassIcon,
+  PipelineIcon,
   PlusIcon,
 } from "@/components/icons"
 import { ApprovalPopover } from "@/components/approval-popover"
@@ -263,6 +264,14 @@ export function Sidebar() {
         </span>
         <div className="flex items-center gap-1">
           <NotificationsButton />
+          <Tooltip
+            content="Pipelines"
+            render={
+              <Link to="/pipelines" aria-label="Pipelines" className="icon-btn">
+                <PipelineIcon size={20} />
+              </Link>
+            }
+          />
           <Tooltip
             content="Settings"
             render={

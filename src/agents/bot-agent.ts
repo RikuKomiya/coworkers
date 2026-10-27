@@ -52,6 +52,7 @@ import type {
   BotInbound,
   BotState,
   BotStatus,
+  BotTask,
   BrowserFrame,
   MessageMeta,
   MessageOrigin,
@@ -62,6 +63,7 @@ import type {
   RoutineWatch,
   RulePolicy,
   Skill,
+  TaskOutcome,
 } from "@/lib/types"
 import {
   APPS_ROOT,
@@ -141,6 +143,7 @@ const TOOL_CLASS: Record<string, ActionClass> = {
   browser_crawl: "browse",
   browser_execute: "browser",
   message_bot: "bots",
+  delegate_task: "bots",
   secret_request: "apps",
   schedule_routine: "routines",
   update_routine: "routines",
@@ -203,6 +206,10 @@ const MAX_REPORTED_IN_PROMPT = 40
 const MAX_INBOUND_CHARS = 8000
 const MAX_WEBHOOK_BYTES = 256 * 1024
 const DAY_MS = 86_400_000
+/** A task handed out longer ago than this no longer shows as outstanding. */
+const DELEGATION_STALE_MS = 3 * DAY_MS
+/** How much of a task's instructions a result message repeats back. */
+const TASK_ECHO_CHARS = 300
 const MAX_FILE_PREVIEW_BYTES = 200_000
 const MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 const WORKSPACE_ROOT = "/workspace"
@@ -253,6 +260,18 @@ interface RoutinePayload {
   kind: Routine["kind"]
   onlyNew?: boolean
   watch?: RoutineWatch
+}
+
+/** A task this bot handed to another bot (`delegate_task`). */
+interface DelegationRow {
+  id: string
+  to_name: string
+  task: string
+  created_at: number
+  finished_at: number | null
+  status: "open" | TaskOutcome["status"]
+  hops: number
+  background: number
 }
 
 interface RoutineRunRow {
@@ -686,6 +705,17 @@ export class BotAgent extends Think<Env, BotState> {
       attempt INTEGER NOT NULL DEFAULT 1,
       note TEXT NOT NULL DEFAULT ''
     )`
+    // Tasks this bot handed to other bots, until their results come back.
+    this.sql`CREATE TABLE IF NOT EXISTS delegations (
+      id TEXT PRIMARY KEY,
+      to_name TEXT NOT NULL,
+      task TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      finished_at INTEGER,
+      status TEXT NOT NULL,
+      hops INTEGER NOT NULL,
+      background INTEGER NOT NULL
+    )`
     // One row per unprompted message, for the daily cap.
     this.sql`CREATE TABLE IF NOT EXISTS proactive_log (
       at INTEGER NOT NULL
@@ -950,6 +980,12 @@ export class BotAgent extends Think<Env, BotState> {
     )
     const context = turnContext(this.state, others, catalog.apps, {
       openItems: this.openItems(),
+      delegations: this.openDelegations().map((d) => ({
+        to: d.to_name,
+        task: clip(d.task, TASK_ECHO_CHARS),
+        at: d.created_at,
+      })),
+      task: this.currentTask(),
       inbound: this.inbound(),
       sharedMemory,
       builtApps: this.apps.list().map((app) => ({
@@ -1512,6 +1548,100 @@ export class BotAgent extends Think<Env, BotState> {
             hops,
             ...(attachments.files.length ? { files: attachments.files } : {}),
           })
+        },
+      }),
+
+      delegate_task: tool({
+        description:
+          "Hand a piece of work to another of the user's bots and get its result back. Returns at once: the result arrives later as a new message, when that bot finishes. To split a job, delegate the parts to several bots in one step, then end your turn and combine the results as they come in.",
+        inputSchema: z.object({
+          to: z.string().describe("The other bot's name"),
+          task: z
+            .string()
+            .describe(
+              "Self-contained instructions: the goal, what you already know, and what to send back. The other bot has not seen this conversation."
+            ),
+          files: z
+            .array(z.string())
+            .max(MAX_BOT_FILES)
+            .optional()
+            .describe(
+              "Your own files it needs (paths under /workspace). They are copied into its inbox."
+            ),
+        }),
+        execute: async ({ to, task, files = [] }, { toolCallId }) => {
+          const hops =
+            (metaOf(this.messages.findLast((m) => m.role === "user")).hops ??
+              0) + 1
+          if (hops > MAX_BOT_HOPS) {
+            return {
+              delegated: false,
+              error: `This work has already passed through ${MAX_BOT_HOPS} bots. Do not hand it on again: finish it yourself or tell the user.`,
+            }
+          }
+          const attachments = await this.readAttachments(files)
+          if ("error" in attachments) {
+            return { delegated: false, error: attachments.error }
+          }
+          // Derived from the tool call, so a recovered turn that re-runs this
+          // call hands out the same task instead of a second one.
+          const taskId = `t${toolCallId.replace(/[^a-zA-Z0-9]/g, "").slice(-24)}`
+          const background = this.isBackgroundTurn()
+          this.sql`INSERT OR IGNORE INTO delegations
+            (id, to_name, task, created_at, status, hops, background)
+            VALUES (${taskId}, ${to}, ${task}, ${Date.now()}, 'open', ${hops},
+                    ${background ? 1 : 0})`
+          const hub = await this.hub()
+          const sent = await hub.delegateTask(this.botId, to, task, {
+            taskId,
+            key: `task:${this.botId}:${taskId}`,
+            hops,
+            background,
+            ...(attachments.files.length ? { files: attachments.files } : {}),
+          })
+          if (!sent.delivered) {
+            this.sql`DELETE FROM delegations WHERE id = ${taskId}`
+            return { delegated: false, error: sent.error }
+          }
+          this.sql`UPDATE delegations SET to_name = ${sent.to ?? to}
+            WHERE id = ${taskId}`
+          return {
+            delegated: true,
+            to: sent.to,
+            taskId,
+            note: "Its result arrives as a new message when it finishes. Do not wait or check on it.",
+          }
+        },
+      }),
+
+      attach_result_files: tool({
+        description:
+          "While working on a task another bot (or a pipeline) gave you: send files back with your result. Your final reply is the result; these go with it.",
+        inputSchema: z.object({
+          files: z
+            .array(z.string())
+            .min(1)
+            .max(MAX_BOT_FILES)
+            .describe("Paths under /workspace"),
+        }),
+        execute: async ({ files }) => {
+          const task = this.currentTask()
+          if (!task) {
+            return {
+              error:
+                "You are not working on a task from another bot. To send files, use message_bot.",
+            }
+          }
+          const attachments = await this.readAttachments(files)
+          if ("error" in attachments) return { error: attachments.error }
+          const key = `task_files:${task.id}`
+          const earlier = this.ctx.storage.kv.get<string[]>(key) ?? []
+          const all = [...new Set([...earlier, ...files])].slice(
+            0,
+            MAX_BOT_FILES
+          )
+          this.ctx.storage.kv.put(key, all)
+          return { attached: all }
         },
       }),
 
@@ -2663,6 +2793,10 @@ export class BotAgent extends Think<Env, BotState> {
     const text = textOf(result.message)
     const status: BotStatus = waiting ? "action_needed" : "idle"
     if (waiting) this.noteApprovalsAsked(result.message)
+    const task = metaOf(trigger).task
+    // An approval card keeps the turn open; the result goes back once the
+    // continuation finishes.
+    if (task && !waiting) await this.finishTask(task, result)
     const routineRun = metaOf(trigger).routine
     if (routineRun) {
       await this.finishRoutineRun(routineRun, result, {
@@ -3082,6 +3216,8 @@ export class BotAgent extends Think<Env, BotState> {
       key?: string
       hops?: number
       routine?: MessageMeta["routine"]
+      task?: BotTask
+      taskResult?: MessageMeta["taskResult"]
     } = {}
   ) {
     const metadata: MessageMeta = {
@@ -3090,6 +3226,8 @@ export class BotAgent extends Think<Env, BotState> {
       ...(options.background ? { background: true } : {}),
       ...(options.hops ? { hops: options.hops } : {}),
       ...(options.routine ? { routine: options.routine } : {}),
+      ...(options.task ? { task: options.task } : {}),
+      ...(options.taskResult ? { taskResult: options.taskResult } : {}),
     }
     await this.runTurn({
       mode: "submit",
@@ -3119,6 +3257,135 @@ export class BotAgent extends Think<Env, BotState> {
       { key: delivery.key, hops: delivery.hops }
     )
     return saved
+  }
+
+  /**
+   * Durable Object RPC from the UserHub: work from another bot or a
+   * pipeline. The hub writes the framing; when the turn ends, its final
+   * reply goes back through `completeTask`.
+   */
+  async receiveTask(
+    origin: MessageOrigin,
+    text: string,
+    delivery: {
+      task: BotTask
+      key?: string
+      hops?: number
+      background?: boolean
+      files?: BotAttachment[]
+    }
+  ): Promise<string[]> {
+    const saved = await this.saveAttachments(origin.name, delivery)
+    const listed = saved.length
+      ? `\n\nAttached files, copied into your workspace:\n${saved.map((p) => `- ${p}`).join("\n")}`
+      : ""
+    await this.submitAs(origin, `${text}${listed}`, {
+      key: delivery.key,
+      hops: delivery.hops,
+      background: delivery.background,
+      task: delivery.task,
+    })
+    return saved
+  }
+
+  /** Durable Object RPC from the UserHub: a bot finished a task this one handed out. */
+  async receiveTaskResult(
+    origin: MessageOrigin,
+    taskId: string,
+    outcome: TaskOutcome
+  ) {
+    const row = this.sql<DelegationRow>`SELECT * FROM delegations
+      WHERE id = ${taskId}`[0]
+    // A re-delivered result changes nothing.
+    if (row && row.status !== "open") return
+    this.sql`UPDATE delegations SET status = ${outcome.status},
+      finished_at = ${Date.now()} WHERE id = ${taskId}`
+    const saved = await this.saveAttachments(origin.name, {
+      key: `result:${taskId}`,
+      files: outcome.files,
+    })
+    const lines = [`[Result from the ${origin.name} bot]`]
+    if (row) lines.push(`Your task: ${clip(row.task, TASK_ECHO_CHARS)}`)
+    if (outcome.status !== "done") {
+      lines.push(
+        `It did not finish (${outcome.status}${outcome.error ? `: ${outcome.error}` : ""}).`
+      )
+    }
+    lines.push(
+      "",
+      outcome.result.trim() || "(It ended without a written reply.)"
+    )
+    if (saved.length) {
+      lines.push(
+        "",
+        "Files it sent back, copied into your workspace:",
+        ...saved.map((p) => `- ${p}`)
+      )
+    }
+    const open = this.openDelegations()
+    lines.push(
+      "",
+      open.length
+        ? `Still waiting on: ${open.map((d) => d.to_name).join(", ")}. Their results arrive as new messages; do not wait for them in this turn.`
+        : "Every task you handed out is back."
+    )
+    await this.submitAs(origin, lines.join("\n"), {
+      key: `task-result:${taskId}`,
+      hops: row?.hops,
+      background: row?.background === 1,
+      taskResult: { taskId },
+    })
+  }
+
+  /** Tasks this bot handed out that have not come back yet. */
+  private openDelegations(): DelegationRow[] {
+    return this.sql<DelegationRow>`SELECT * FROM delegations
+      WHERE status = 'open' AND created_at > ${Date.now() - DELEGATION_STALE_MS}
+      ORDER BY created_at ASC`
+  }
+
+  /** The task the current turn is working on, if another bot or a pipeline gave it. */
+  private currentTask(): BotTask | undefined {
+    return metaOf(this.messages.findLast((m) => m.role === "user")).task
+  }
+
+  /** Send a finished task's final reply back to whoever handed it out. */
+  private async finishTask(task: BotTask, result: ChatResponseResult) {
+    const doneKey = `task_done:${task.id}`
+    // Recovery can deliver the hook twice; only the first one reports.
+    if (this.ctx.storage.kv.get(doneKey) !== undefined) return
+    this.ctx.storage.kv.put(doneKey, Date.now())
+    const filesKey = `task_files:${task.id}`
+    const paths = this.ctx.storage.kv.get<string[]>(filesKey) ?? []
+    this.ctx.storage.kv.delete(filesKey)
+    const attachments = paths.length
+      ? await this.readAttachments(paths)
+      : { files: [] }
+    const outcome: TaskOutcome = {
+      status:
+        result.status === "completed"
+          ? "done"
+          : result.status === "aborted"
+            ? "stopped"
+            : "failed",
+      result: isNoUpdate(finalText(result.message))
+        ? ""
+        : finalText(result.message) || textOf(result.message),
+      ...(result.status === "error"
+        ? { error: clip(result.error?.trim() || "The model call failed.", 300) }
+        : "error" in attachments
+          ? { error: `Files were not sent: ${attachments.error}` }
+          : {}),
+      ...("files" in attachments && attachments.files.length
+        ? { files: attachments.files }
+        : {}),
+    }
+    try {
+      const hub = await this.hub()
+      await hub.completeTask(this.botId, task, outcome)
+    } catch (err) {
+      console.error("Reporting a task result failed", err)
+    }
   }
 
   /**

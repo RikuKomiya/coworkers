@@ -6,6 +6,9 @@ import type {
   BotSummary,
   Connection,
   HubState,
+  Pipeline,
+  PipelineDraft,
+  PipelineRun,
   PushSubscriptionData,
 } from "@/lib/types"
 import type { ModelSettings, ModelTestResult } from "@/lib/models"
@@ -42,6 +45,18 @@ interface HubContextValue {
   sharedMemory: SharedMemoryApi | null
   /** Which models bots use. Null until the hub WebSocket is up. */
   models: ModelsApi | null
+  /** Chains of bots. Null until the hub WebSocket is up. */
+  pipelines: PipelinesApi | null
+}
+
+export interface PipelinesApi {
+  save: (input: PipelineDraft & { id?: string }) => Promise<Pipeline>
+  remove: (pipelineId: string) => Promise<void>
+  run: (pipelineId: string, input?: string) => Promise<PipelineRun>
+  answer: (runId: string, approved: boolean) => Promise<void>
+  stop: (runId: string) => Promise<void>
+  /** A step's full result; state only carries the start of it. */
+  output: (runId: string, step: number) => Promise<string | null>
 }
 
 export interface ModelsApi {
@@ -111,6 +126,7 @@ export function StaticHubProvider({
       push: null,
       sharedMemory: null,
       models: null,
+      pipelines: null,
     }),
     [viewer, initial]
   )
@@ -164,6 +180,18 @@ export function LiveHubProvider({ viewer, initial, children }: ProviderProps) {
           ? {
               set: (patch) => agent.stub.setModels(patch),
               test: (modelId) => agent.stub.testModel(modelId),
+            }
+          : null,
+      pipelines:
+        agent.state !== undefined
+          ? {
+              save: (input) => agent.stub.savePipeline(input),
+              remove: (id) => agent.stub.deletePipeline(id),
+              run: (id, input) => agent.stub.runPipeline(id, input),
+              answer: (runId, approved) =>
+                agent.stub.answerPipelineStep(runId, approved),
+              stop: (runId) => agent.stub.stopPipelineRun(runId),
+              output: (runId, step) => agent.stub.pipelineOutput(runId, step),
             }
           : null,
     }),

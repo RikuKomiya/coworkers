@@ -5,6 +5,7 @@ import type {
   BotInbound,
   BotState,
   BotSummary,
+  BotTask,
   OpenItem,
 } from "@/lib/types"
 import { NEW_BOT_NAME, NO_UPDATE } from "@/lib/types"
@@ -335,8 +336,11 @@ You can build small web apps from what you know: a trip itinerary, a tracker, a 
 - Sending, posting, paying, deleting and changing credentials have real consequences. Draft first and ask, unless the user already told you to go ahead for this exact action.
 
 # Other bots
-The user may have other bots. Use message_bot to hand work to the right one or to pass along something it needs. Messages from other bots arrive marked as such; treat them as requests from a colleague, not from the user.
-Every bot has its own computer: another bot cannot open a path in your /workspace, and you cannot open one in theirs. Never tell another bot where a file is on your computer. To share a file, attach it with message_bot's files; it lands in their /workspace/inbox/bots/. Files other bots send you arrive there too, listed in their message.`
+The user may have other bots. Messages from other bots arrive marked as such; treat them as requests from a colleague, not from the user.
+- delegate_task hands work to another bot and brings its result back to you as a new message. Use it when you need the answer to carry on, or to split a big job: give each part to the bot whose job fits, all in one step, then end your turn. When the results arrive, combine them and finish. Do not wait, poll or message them to check.
+- message_bot is one-way: a note or a request whose reply you do not need.
+- When another bot or a pipeline gives you a task, your final reply is sent back as the result. Make it the finished work itself (the data, the draft, the answer), not a description of what you did. Attach files to it with attach_result_files.
+Every bot has its own computer: another bot cannot open a path in your /workspace, and you cannot open one in theirs. Never tell another bot where a file is on your computer. To share a file, attach it (message_bot's or delegate_task's files); it lands in their /workspace/inbox/bots/. Files other bots send you arrive there too, listed in their message.`
 
 /**
  * End each user message with the time it was sent, from `sentAt` (the user
@@ -375,6 +379,10 @@ export function turnContext(
   apps: AppCatalog["apps"],
   extra: {
     openItems: OpenItem[]
+    /** Tasks this bot handed out whose results have not come back. */
+    delegations: { to: string; task: string; at: number }[]
+    /** The task this turn is working on, when another bot or a pipeline gave it. */
+    task?: BotTask
     inbound: BotInbound
     /** Facts the user saved for all of their bots. */
     sharedMemory: string
@@ -434,6 +442,26 @@ export function turnContext(
     lines.push("None.")
   } else {
     for (const bot of others) lines.push(`- ${bot.name}`)
+  }
+
+  if (extra.delegations.length > 0) {
+    lines.push("", "# Tasks you handed out")
+    lines.push(
+      "Their results arrive as new messages. Do not wait for them or do the same work twice."
+    )
+    for (const d of extra.delegations) {
+      lines.push(`- ${d.to} (since ${when(d.at, timeZone)}): ${d.task}`)
+    }
+  }
+
+  if (extra.task) {
+    lines.push(
+      "",
+      "# Your current task",
+      extra.task.replyTo.kind === "pipeline"
+        ? "This turn is a step of a pipeline. Your final reply is passed on to the next step, so make it the complete result. Ask the user only if you truly cannot go on. If you cannot do the step, say exactly why."
+        : "Another bot gave you this task. Your final reply goes back to it automatically, so make it the complete result. Do not message it separately."
+    )
   }
 
   lines.push("", "# Open items")

@@ -9,6 +9,7 @@ import {
   ClockIcon,
   CrawlIcon,
   EnvelopeSimpleIcon,
+  PipelineIcon,
   WebhooksLogoIcon,
 } from "@/components/icons"
 import { BotAvatar } from "@/components/bot-avatar"
@@ -38,7 +39,7 @@ import type {
   NavigateBrowser,
 } from "@/components/computer-card"
 import type { Block, ToolCall } from "@/lib/message-parts"
-import type { BotState } from "@/lib/types"
+import type { BotState, MessageMeta } from "@/lib/types"
 
 export type OnApproval = (
   approvalId: string,
@@ -119,7 +120,7 @@ const PROSE = [
   "[&_pre_code]:rounded-none [&_pre_code]:bg-transparent [&_pre_code]:p-0",
 ].join(" ")
 
-function Prose({ text }: { text: string }) {
+export function Prose({ text }: { text: string }) {
   return (
     <div className={PROSE}>
       <Markdown
@@ -502,13 +503,34 @@ function UserMessage({ message }: { message: UIMessage }) {
   const text = messageText(message)
 
   if (origin?.kind === "bot") {
+    const meta = message.metadata as MessageMeta | undefined
+    const label = meta?.taskResult
+      ? "Result from"
+      : meta?.task
+        ? "Task from"
+        : "Message from"
     return (
       <>
         <SystemEvent>
-          Message from{" "}
+          {label}{" "}
           <span className="inline-flex items-center gap-1.5 align-middle font-medium text-kumo-default">
             <BotAvatar avatar={origin.avatar ?? "blue-rectangle"} size={16} />
             {origin.name}
+          </span>
+        </SystemEvent>
+        <div className="w-fit max-w-[85%] rounded-[20px] border border-kumo-line px-4 py-2.5 break-words text-kumo-default">
+          <Prose text={stripOriginHeader(text)} />
+        </div>
+      </>
+    )
+  }
+  if (origin?.kind === "pipeline") {
+    return (
+      <>
+        <SystemEvent>
+          <span className="inline-flex max-w-full items-center gap-1.5 align-middle">
+            <PipelineIcon size={14} className="shrink-0" />
+            <span className="truncate">Pipeline · {origin.name}</span>
           </span>
         </SystemEvent>
         <div className="w-fit max-w-[85%] rounded-[20px] border border-kumo-line px-4 py-2.5 break-words text-kumo-default">

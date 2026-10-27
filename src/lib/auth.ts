@@ -20,6 +20,9 @@ export interface Identity {
 export class Unauthorized extends Error {}
 
 export function accessConfigured() {
+  // `coworkers.deploy.json` sets the Access values for dev too, but
+  // localhost is never behind Access, so no request could carry a token.
+  if (import.meta.env.DEV) return false
   return !!(env.ACCESS_TEAM_DOMAIN?.trim() && env.ACCESS_AUD?.trim())
 }
 

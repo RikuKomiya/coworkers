@@ -89,6 +89,10 @@ export interface HubState {
   connections: Connection[]
   /** Account-wide model choice. Absent on hubs created before models were configurable. */
   models?: ModelSettings
+  /** Absent on hubs created before pipelines existed. */
+  pipelines?: Pipeline[]
+  /** Recent runs of every pipeline, newest first. Outputs are clipped. */
+  pipelineRuns?: PipelineRun[]
   /** The deployment's own models and gateway, refreshed on every start. */
   deployment?: DeploymentModels
 }
@@ -267,8 +271,16 @@ export interface BotState {
  * thread hides the trigger and shows only what the bot chose to say.
  */
 export interface MessageOrigin {
-  kind: "bot" | "routine" | "check-in" | "email" | "webhook" | "app" | "crawl"
-  /** Bot or routine name, email sender, webhook source, app name, or crawled host. */
+  kind:
+    | "bot"
+    | "routine"
+    | "check-in"
+    | "email"
+    | "webhook"
+    | "app"
+    | "crawl"
+    | "pipeline"
+  /** Bot, routine or pipeline name, email sender, webhook source, app name, or crawled host. */
   name: string
   avatar?: BotAvatarKind
 }
@@ -286,6 +298,30 @@ export interface MessageMeta {
   hops?: number
   /** On the trigger of a routine run: which run of which routine it is. */
   routine?: { id: string; runId: string; attempt: number }
+  /** On the trigger of a delegated task: its result goes back automatically. */
+  task?: BotTask
+  /** On a message carrying another bot's result for a task this bot handed out. */
+  taskResult?: { taskId: string }
+}
+
+/** Where a task's result goes when the bot working on it finishes. */
+export type TaskReplyTo =
+  | { kind: "bot"; botId: string }
+  | { kind: "pipeline"; runId: string; step: number }
+
+/** Work handed to a bot whose final reply is sent back to whoever asked. */
+export interface BotTask {
+  id: string
+  replyTo: TaskReplyTo
+}
+
+/** How a task ended, as the bot that did it reports it. */
+export interface TaskOutcome {
+  status: "done" | "failed" | "stopped"
+  /** The bot's final reply. */
+  result: string
+  error?: string
+  files?: BotAttachment[]
 }
 
 /** One run of a routine, newest first in `getRoutineRuns()`. */
@@ -362,6 +398,59 @@ export interface SecretMeta {
   header: string
   purpose: string
   createdAt: number
+}
+
+/** One step of a pipeline: a bot does some work, or the user signs off. */
+export type PipelineStep =
+  | { kind: "bot"; botId: string; instructions: string }
+  | { kind: "approval"; note: string }
+
+/**
+ * A fixed chain of bots, owned by the UserHub. Each bot step gets the
+ * previous step's result (and files) as its input.
+ */
+export interface Pipeline {
+  id: string
+  name: string
+  steps: PipelineStep[]
+  /** 5-field UTC cron, or null to run only by hand. */
+  cron: string | null
+  createdAt: number
+  updatedAt: number
+}
+
+/** What the editor sends to save a pipeline. */
+export type PipelineDraft = Pick<Pipeline, "name" | "steps" | "cron">
+
+export type PipelineRunStatus =
+  "running" | "waiting" | "done" | "failed" | "stopped"
+
+export interface PipelineRunStep {
+  status: "pending" | "running" | "waiting" | "done" | "failed" | "skipped"
+  /** Bot steps: who did it, as named when the step started. */
+  botName?: string
+  /** Bot steps: the final reply, clipped. The full text is in `pipelineOutput`. */
+  output?: string
+  /** Names of the files the step passed on. */
+  files?: string[]
+  error?: string
+  startedAt?: number
+  finishedAt?: number
+}
+
+export interface PipelineRun {
+  id: string
+  pipelineId: string
+  name: string
+  status: PipelineRunStatus
+  trigger: "manual" | "schedule"
+  /** What the user gave the first step, if anything. */
+  input: string
+  /** The steps as they were when the run started. */
+  plan: PipelineStep[]
+  steps: PipelineRunStep[]
+  startedAt: number
+  finishedAt: number | null
 }
 
 /** A file one bot sends another with message_bot. */

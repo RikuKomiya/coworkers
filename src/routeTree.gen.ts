@@ -14,6 +14,8 @@ import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as AppSettingsRouteImport } from './routes/_app/settings'
 import { Route as ApiHelloRouteImport } from './routes/api/hello'
 import { Route as AppBotsBotIdRouteImport } from './routes/_app/bots.$botId'
+import { Route as AppPipelinesIndexRouteImport } from './routes/_app/pipelines.index'
+import { Route as AppPipelinesPipelineIdRouteImport } from './routes/_app/pipelines.$pipelineId'
 import { Route as AppBotsBotIdComputerRouteImport } from './routes/_app/bots.$botId.computer'
 import { Route as AppBotsBotIdSettingsRouteImport } from './routes/_app/bots.$botId.settings'
 import { Route as ApiHooksUserIdBotIdTokenRouteImport } from './routes/api/hooks.$userId.$botId.$token'
@@ -42,6 +44,16 @@ const AppBotsBotIdRoute = AppBotsBotIdRouteImport.update({
   path: '/bots/$botId',
   getParentRoute: () => AppRoute,
 } as any)
+const AppPipelinesIndexRoute = AppPipelinesIndexRouteImport.update({
+  id: '/pipelines/',
+  path: '/pipelines/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppPipelinesPipelineIdRoute = AppPipelinesPipelineIdRouteImport.update({
+  id: '/pipelines/$pipelineId',
+  path: '/pipelines/$pipelineId',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppBotsBotIdComputerRoute = AppBotsBotIdComputerRouteImport.update({
   id: '/computer',
   path: '/computer',
@@ -64,6 +76,8 @@ export interface FileRoutesByFullPath {
   '/settings': typeof AppSettingsRoute
   '/api/hello': typeof ApiHelloRoute
   '/bots/$botId': typeof AppBotsBotIdRouteWithChildren
+  '/pipelines/$pipelineId': typeof AppPipelinesPipelineIdRoute
+  '/pipelines/': typeof AppPipelinesIndexRoute
   '/bots/$botId/computer': typeof AppBotsBotIdComputerRoute
   '/bots/$botId/settings': typeof AppBotsBotIdSettingsRoute
   '/api/hooks/$userId/$botId/$token': typeof ApiHooksUserIdBotIdTokenRoute
@@ -73,6 +87,8 @@ export interface FileRoutesByTo {
   '/api/hello': typeof ApiHelloRoute
   '/': typeof AppIndexRoute
   '/bots/$botId': typeof AppBotsBotIdRouteWithChildren
+  '/pipelines/$pipelineId': typeof AppPipelinesPipelineIdRoute
+  '/pipelines': typeof AppPipelinesIndexRoute
   '/bots/$botId/computer': typeof AppBotsBotIdComputerRoute
   '/bots/$botId/settings': typeof AppBotsBotIdSettingsRoute
   '/api/hooks/$userId/$botId/$token': typeof ApiHooksUserIdBotIdTokenRoute
@@ -84,6 +100,8 @@ export interface FileRoutesById {
   '/api/hello': typeof ApiHelloRoute
   '/_app/': typeof AppIndexRoute
   '/_app/bots/$botId': typeof AppBotsBotIdRouteWithChildren
+  '/_app/pipelines/$pipelineId': typeof AppPipelinesPipelineIdRoute
+  '/_app/pipelines/': typeof AppPipelinesIndexRoute
   '/_app/bots/$botId/computer': typeof AppBotsBotIdComputerRoute
   '/_app/bots/$botId/settings': typeof AppBotsBotIdSettingsRoute
   '/api/hooks/$userId/$botId/$token': typeof ApiHooksUserIdBotIdTokenRoute
@@ -95,6 +113,8 @@ export interface FileRouteTypes {
     | '/settings'
     | '/api/hello'
     | '/bots/$botId'
+    | '/pipelines/$pipelineId'
+    | '/pipelines/'
     | '/bots/$botId/computer'
     | '/bots/$botId/settings'
     | '/api/hooks/$userId/$botId/$token'
@@ -104,6 +124,8 @@ export interface FileRouteTypes {
     | '/api/hello'
     | '/'
     | '/bots/$botId'
+    | '/pipelines/$pipelineId'
+    | '/pipelines'
     | '/bots/$botId/computer'
     | '/bots/$botId/settings'
     | '/api/hooks/$userId/$botId/$token'
@@ -114,6 +136,8 @@ export interface FileRouteTypes {
     | '/api/hello'
     | '/_app/'
     | '/_app/bots/$botId'
+    | '/_app/pipelines/$pipelineId'
+    | '/_app/pipelines/'
     | '/_app/bots/$botId/computer'
     | '/_app/bots/$botId/settings'
     | '/api/hooks/$userId/$botId/$token'
@@ -162,6 +186,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppBotsBotIdRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/pipelines/': {
+      id: '/_app/pipelines/'
+      path: '/pipelines'
+      fullPath: '/pipelines/'
+      preLoaderRoute: typeof AppPipelinesIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/pipelines/$pipelineId': {
+      id: '/_app/pipelines/$pipelineId'
+      path: '/pipelines/$pipelineId'
+      fullPath: '/pipelines/$pipelineId'
+      preLoaderRoute: typeof AppPipelinesPipelineIdRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/bots/$botId/computer': {
       id: '/_app/bots/$botId/computer'
       path: '/computer'
@@ -204,12 +242,16 @@ interface AppRouteChildren {
   AppSettingsRoute: typeof AppSettingsRoute
   AppIndexRoute: typeof AppIndexRoute
   AppBotsBotIdRoute: typeof AppBotsBotIdRouteWithChildren
+  AppPipelinesPipelineIdRoute: typeof AppPipelinesPipelineIdRoute
+  AppPipelinesIndexRoute: typeof AppPipelinesIndexRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
   AppSettingsRoute: AppSettingsRoute,
   AppIndexRoute: AppIndexRoute,
   AppBotsBotIdRoute: AppBotsBotIdRouteWithChildren,
+  AppPipelinesPipelineIdRoute: AppPipelinesPipelineIdRoute,
+  AppPipelinesIndexRoute: AppPipelinesIndexRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)

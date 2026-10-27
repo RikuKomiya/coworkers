@@ -339,6 +339,10 @@ export function describeCall(call: ToolCall): string {
       return `Started crawling ${str("url")}`
     case "message_bot":
       return `Messaged ${str("to")}`
+    case "delegate_task":
+      return `Gave ${str("to")} a task`
+    case "attach_result_files":
+      return "Attached files to the result"
     case "schedule_routine":
       return `Scheduled "${str("name")}"`
     case "update_routine":
@@ -413,6 +417,8 @@ export function stepKind(call: ToolCall): StepKind {
     case "cancel_routine":
       return "routine"
     case "message_bot":
+    case "delegate_task":
+    case "attach_result_files":
       return "bot"
     case "save_app":
     case "list_apps":

@@ -47,6 +47,8 @@ import {
   Tick02Icon as Tick,
   ViewIcon as View,
   WebhookIcon as Webhook,
+  WorkflowSquare03Icon as Workflow,
+  PlayIcon as Play,
 } from "@hugeicons/core-free-icons"
 import type { HugeiconsProps, IconSvgElement } from "@hugeicons/react"
 
@@ -114,6 +116,8 @@ export const SearchListIcon = icon(SearchList, "SearchListIcon")
 export const ComputerIcon = icon(AiBrowser, "ComputerIcon")
 export const PaperclipIcon = icon(Attachment, "PaperclipIcon")
 export const PlugsConnectedIcon = icon(Plug, "PlugsConnectedIcon")
+export const PipelineIcon = icon(Workflow, "PipelineIcon")
+export const PlayIcon = icon(Play, "PlayIcon")
 export const PlusIcon = icon(Add, "PlusIcon")
 export const PowerIcon = icon(Power, "PowerIcon")
 export const SidebarSimpleIcon = icon(SidebarLeft, "SidebarSimpleIcon")

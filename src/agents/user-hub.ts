@@ -10,13 +10,26 @@ import type {
   AppTool,
   BotAttachment,
   BotSummary,
+  BotTask,
   Connection,
   HubState,
+  Pipeline,
+  PipelineDraft,
+  PipelineRun,
+  PipelineRunStep,
+  PipelineStep,
   PushSubscriptionData,
+  TaskOutcome,
 } from "@/lib/types"
 import type { BotAgent } from "./bot-agent"
 import { MAX_MEMORY_CHARS, appendFact } from "./memory"
 import { deploymentModels, languageModel } from "./models"
+import {
+  MAX_PIPELINE_INPUT_CHARS,
+  delegationPrompt,
+  pipelineStepPrompt,
+  validatePipeline,
+} from "./pipelines"
 
 const READ_VERBS =
   /(^|[_\-.])(get|list|search|read|fetch|find|query|lookup|describe|view|show|count)([_\-.]|$)/i
@@ -29,6 +42,18 @@ const WRITE_VERBS =
  */
 function looksReadOnly(name: string) {
   return READ_VERBS.test(name) && !WRITE_VERBS.test(name)
+}
+
+const MAX_PIPELINES = 50
+/** Runs kept in state (and their outputs in SQL), across all pipelines. */
+const MAX_PIPELINE_RUNS = 30
+/** A step's output as broadcast to the browser; the full text stays in SQL. */
+const MAX_STEP_OUTPUT_IN_STATE = 4_000
+/** SQLite rows top out at 2 MB; bigger files are not passed between steps. */
+const MAX_STORED_FILE_BYTES = 1_900_000
+
+function clip(text: string, max: number) {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text
 }
 
 /** MCP server id for a connection; it namespaces the connection's tools. */
@@ -48,7 +73,12 @@ function serverId(connectionId: string) {
  * WebSocket. Plain public methods are Durable Object RPC, called by bots.
  */
 export class UserHub extends Agent<Env, HubState> {
-  initialState: HubState = { bots: [], connections: [] }
+  initialState: HubState = {
+    bots: [],
+    connections: [],
+    pipelines: [],
+    pipelineRuns: [],
+  }
 
   async onStart() {
     // Push endpoints are capability URLs: keep them out of broadcast state.
@@ -57,9 +87,25 @@ export class UserHub extends Agent<Env, HubState> {
       data TEXT NOT NULL,
       created_at INTEGER NOT NULL
     )`
+    // Each pipeline step's full result, and the files it passes on. State
+    // carries a clipped copy for the browser.
+    this.sql`CREATE TABLE IF NOT EXISTS pipeline_outputs (
+      run_id TEXT NOT NULL,
+      step INTEGER NOT NULL,
+      output TEXT NOT NULL,
+      PRIMARY KEY (run_id, step)
+    )`
+    this.sql`CREATE TABLE IF NOT EXISTS pipeline_files (
+      run_id TEXT NOT NULL,
+      step INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      bytes BLOB NOT NULL
+    )`
     // The deployment's MODEL or gateway may have changed since last start.
     this.setState({
       ...this.state,
+      pipelines: this.state.pipelines ?? [],
+      pipelineRuns: this.state.pipelineRuns ?? [],
       models: { ...DEFAULT_MODEL_SETTINGS, ...this.state.models },
       deployment: deploymentModels(this.env),
     })
@@ -153,6 +199,14 @@ export class UserHub extends Agent<Env, HubState> {
       ...this.state,
       bots: this.state.bots.filter((b) => b.id !== botId),
     })
+    // A step it was working on would never report back.
+    for (const run of this.runs) {
+      const index = run.steps.findIndex((s) => s.status === "running")
+      const step = run.plan[index]
+      if (step?.kind === "bot" && step.botId === botId) {
+        await this.failStep(run.id, index, "Its bot was deleted.")
+      }
+    }
     try {
       const bot = await this.bot(botId)
       await bot.destroy()
@@ -691,24 +745,9 @@ export class UserHub extends Agent<Env, HubState> {
     error?: string
     files?: string[]
   }> {
-    const from = this.state.bots.find((b) => b.id === fromBotId)
-    const needle = to.trim().toLowerCase()
-    const target = this.state.bots.find(
-      (b) => b.id === needle || b.name.toLowerCase() === needle
-    )
-    if (!from) return { delivered: false, error: "Unknown sender" }
-    if (!target) {
-      const names = this.state.bots
-        .filter((b) => b.id !== fromBotId)
-        .map((b) => b.name)
-      return {
-        delivered: false,
-        error: `No bot named "${to}". Available: ${names.join(", ") || "none"}`,
-      }
-    }
-    if (target.id === fromBotId) {
-      return { delivered: false, error: "A bot cannot message itself" }
-    }
+    const found = this.recipient(fromBotId, to)
+    if ("error" in found) return { delivered: false, error: found.error }
+    const { from, target } = found
     const bot = await this.bot(target.id)
     const saved = await bot.receiveBotMessage(
       { kind: "bot", name: from.name, avatar: from.avatar },
@@ -720,6 +759,476 @@ export class UserHub extends Agent<Env, HubState> {
       to: target.name,
       ...(saved.length ? { files: saved } : {}),
     }
+  }
+
+  /** The sender and the bot it named (by name or id), for bot-to-bot calls. */
+  private recipient(
+    fromBotId: string,
+    to: string
+  ): { from: BotSummary; target: BotSummary } | { error: string } {
+    const from = this.state.bots.find((b) => b.id === fromBotId)
+    const needle = to.trim().toLowerCase()
+    const target = this.state.bots.find(
+      (b) => b.id === needle || b.name.toLowerCase() === needle
+    )
+    if (!from) return { error: "Unknown sender" }
+    if (!target) {
+      const names = this.state.bots
+        .filter((b) => b.id !== fromBotId)
+        .map((b) => b.name)
+      return {
+        error: `No bot named "${to}". Available: ${names.join(", ") || "none"}`,
+      }
+    }
+    if (target.id === fromBotId) {
+      return { error: "A bot cannot message itself" }
+    }
+    return { from, target }
+  }
+
+  /** A bot hands another a task; the result comes back through `completeTask`. */
+  async delegateTask(
+    fromBotId: string,
+    to: string,
+    task: string,
+    delivery: {
+      taskId: string
+      key: string
+      hops: number
+      background: boolean
+      files?: BotAttachment[]
+    }
+  ): Promise<{ delivered: boolean; to?: string; error?: string }> {
+    const found = this.recipient(fromBotId, to)
+    if ("error" in found) return { delivered: false, error: found.error }
+    const { from, target } = found
+    const bot = await this.bot(target.id)
+    await bot.receiveTask(
+      { kind: "bot", name: from.name, avatar: from.avatar },
+      delegationPrompt(from.name, task),
+      {
+        task: {
+          id: delivery.taskId,
+          replyTo: { kind: "bot", botId: fromBotId },
+        },
+        key: delivery.key,
+        hops: delivery.hops,
+        background: delivery.background,
+        ...(delivery.files ? { files: delivery.files } : {}),
+      }
+    )
+    return { delivered: true, to: target.name }
+  }
+
+  /** A bot finished a task: send the result to whoever handed it out. */
+  async completeTask(botId: string, task: BotTask, outcome: TaskOutcome) {
+    const { replyTo } = task
+    if (replyTo.kind === "pipeline") {
+      await this.finishBotStep(replyTo.runId, replyTo.step, botId, outcome)
+      return
+    }
+    if (!this.state.bots.some((b) => b.id === replyTo.botId)) return
+    const from = this.state.bots.find((b) => b.id === botId)
+    const sender = await this.bot(replyTo.botId)
+    await sender.receiveTaskResult(
+      {
+        kind: "bot",
+        name: from?.name ?? "A deleted bot",
+        ...(from ? { avatar: from.avatar } : {}),
+      },
+      task.id,
+      outcome
+    )
+  }
+
+  // ── Pipelines ───────────────────────────────────────────────────────
+
+  private get pipelines() {
+    return this.state.pipelines ?? []
+  }
+
+  private get runs() {
+    return this.state.pipelineRuns ?? []
+  }
+
+  @callable()
+  async savePipeline(
+    input: PipelineDraft & { id?: string }
+  ): Promise<Pipeline> {
+    const draft = validatePipeline(
+      input,
+      new Set(this.state.bots.map((b) => b.id))
+    )
+    const now = Date.now()
+    const existing = input.id
+      ? this.pipelines.find((p) => p.id === input.id)
+      : undefined
+    if (!existing && this.pipelines.length >= MAX_PIPELINES) {
+      throw new Error(`You can have at most ${MAX_PIPELINES} pipelines.`)
+    }
+    const pipeline: Pipeline = existing
+      ? { ...existing, ...draft, updatedAt: now }
+      : {
+          id: crypto.randomUUID().slice(0, 8),
+          ...draft,
+          createdAt: now,
+          updatedAt: now,
+        }
+    this.setState({
+      ...this.state,
+      pipelines: existing
+        ? this.pipelines.map((p) => (p.id === pipeline.id ? pipeline : p))
+        : [pipeline, ...this.pipelines],
+    })
+    await this.cancelPipelineSchedule(pipeline.id)
+    if (pipeline.cron) {
+      await this.schedule(pipeline.cron, "runScheduledPipeline", {
+        id: pipeline.id,
+      })
+    }
+    return pipeline
+  }
+
+  @callable()
+  async deletePipeline(pipelineId: string) {
+    await this.cancelPipelineSchedule(pipelineId)
+    const gone = this.runs.filter((r) => r.pipelineId === pipelineId)
+    for (const run of gone) this.dropRunData(run.id)
+    this.setState({
+      ...this.state,
+      pipelines: this.pipelines.filter((p) => p.id !== pipelineId),
+      pipelineRuns: this.runs.filter((r) => r.pipelineId !== pipelineId),
+    })
+  }
+
+  @callable()
+  async runPipeline(pipelineId: string, input = ""): Promise<PipelineRun> {
+    const pipeline = this.pipelines.find((p) => p.id === pipelineId)
+    if (!pipeline) throw new Error("No such pipeline.")
+    return this.startRun(pipeline, "manual", input)
+  }
+
+  /** The user's answer to an approval step. */
+  @callable()
+  async answerPipelineStep(runId: string, approved: boolean) {
+    const run = this.runs.find((r) => r.id === runId)
+    const index = run?.steps.findIndex((s) => s.status === "waiting") ?? -1
+    if (!run || run.status !== "waiting" || index === -1) {
+      throw new Error("That step was already answered.")
+    }
+    if (!approved) {
+      this.patchStep(runId, index, {
+        status: "failed",
+        error: "You turned it down.",
+        finishedAt: Date.now(),
+      })
+      await this.finishRun(runId, "stopped")
+      return
+    }
+    this.patchStep(runId, index, { status: "done", finishedAt: Date.now() })
+    this.patchRun(runId, { status: "running" })
+    await this.advanceRun(runId)
+  }
+
+  /**
+   * Stop a run. A bot already working on a step finishes its turn, but its
+   * result goes nowhere.
+   */
+  @callable()
+  async stopPipelineRun(runId: string) {
+    const run = this.runs.find((r) => r.id === runId)
+    if (!run || (run.status !== "running" && run.status !== "waiting")) return
+    const index = run.steps.findIndex(
+      (s) => s.status === "running" || s.status === "waiting"
+    )
+    if (index !== -1) {
+      this.patchStep(runId, index, {
+        status: "failed",
+        error: "Stopped.",
+        finishedAt: Date.now(),
+      })
+    }
+    await this.finishRun(runId, "stopped")
+  }
+
+  /** A step's full result; state only carries the start of it. */
+  @callable()
+  pipelineOutput(runId: string, step: number): string | null {
+    return (
+      this.sql<{ output: string }>`SELECT output FROM pipeline_outputs
+        WHERE run_id = ${runId} AND step = ${step}`[0]?.output ?? null
+    )
+  }
+
+  /** Schedule callback. */
+  async runScheduledPipeline(payload: { id: string }) {
+    const pipeline = this.pipelines.find((p) => p.id === payload.id)
+    if (!pipeline?.cron) return
+    // Two runs of one pipeline at once would do the same work twice.
+    const busy = this.runs.some(
+      (r) =>
+        r.pipelineId === pipeline.id &&
+        (r.status === "running" || r.status === "waiting")
+    )
+    if (busy) return
+    await this.startRun(pipeline, "schedule", "")
+  }
+
+  private async cancelPipelineSchedule(pipelineId: string) {
+    const matches = this.getSchedules<{ id: string }>().filter(
+      (s) =>
+        s.callback === "runScheduledPipeline" && s.payload.id === pipelineId
+    )
+    for (const match of matches) await this.cancelSchedule(match.id)
+  }
+
+  private async startRun(
+    pipeline: Pipeline,
+    trigger: PipelineRun["trigger"],
+    input: string
+  ): Promise<PipelineRun> {
+    const run: PipelineRun = {
+      id: crypto.randomUUID().slice(0, 8),
+      pipelineId: pipeline.id,
+      name: pipeline.name,
+      status: "running",
+      trigger,
+      input: input.trim().slice(0, MAX_PIPELINE_INPUT_CHARS),
+      plan: pipeline.steps,
+      steps: pipeline.steps.map(() => ({ status: "pending" })),
+      startedAt: Date.now(),
+      finishedAt: null,
+    }
+    const runs = [run, ...this.runs]
+    for (const old of runs.slice(MAX_PIPELINE_RUNS)) this.dropRunData(old.id)
+    this.setState({
+      ...this.state,
+      pipelineRuns: runs.slice(0, MAX_PIPELINE_RUNS),
+    })
+    await this.advanceRun(run.id)
+    return this.runs.find((r) => r.id === run.id) ?? run
+  }
+
+  /** Start the run's next pending step, or finish the run. */
+  private async advanceRun(runId: string) {
+    const run = this.runs.find((r) => r.id === runId)
+    if (!run || run.status !== "running") return
+    const index = run.steps.findIndex((s) => s.status === "pending")
+    if (index === -1) {
+      await this.finishRun(runId, "done")
+      return
+    }
+    const step = run.plan[index]
+    if (step.kind === "approval") {
+      this.patchStep(runId, index, { status: "waiting", startedAt: Date.now() })
+      this.patchRun(runId, { status: "waiting" })
+      await this.push({
+        title: `Pipeline · ${run.name}`,
+        body: step.note
+          ? `Needs your OK: ${clip(step.note, 140)}`
+          : `Step ${index + 1} needs your OK to continue`,
+        tag: `pipeline-${run.pipelineId}`,
+        url: `/pipelines/${run.pipelineId}`,
+      })
+      return
+    }
+
+    const bot = this.state.bots.find((b) => b.id === step.botId)
+    if (!bot) {
+      await this.failStep(runId, index, "Its bot was deleted.")
+      return
+    }
+    this.patchStep(runId, index, {
+      status: "running",
+      botName: bot.name,
+      startedAt: Date.now(),
+    })
+    const previous = this.previousResult(run, index)
+    try {
+      const target = await this.bot(bot.id)
+      await target.receiveTask(
+        { kind: "pipeline", name: run.name },
+        pipelineStepPrompt({
+          pipeline: run.name,
+          step: index,
+          steps: run.plan.length,
+          instructions: step.instructions,
+          from: previous.from,
+          input: previous.text,
+          next: this.nextRecipient(run.plan, index),
+        }),
+        {
+          task: {
+            id: `${run.id}:${index}`,
+            replyTo: { kind: "pipeline", runId: run.id, step: index },
+          },
+          key: `pipeline:${run.id}:${index}`,
+          hops: 1,
+          // Nobody is watching a scheduled run: no approvals, cheaper model.
+          background: run.trigger === "schedule",
+          ...(previous.files.length ? { files: previous.files } : {}),
+        }
+      )
+    } catch (err) {
+      console.error(`Pipeline ${run.id} step ${index} did not start`, err)
+      await this.failStep(runId, index, "The bot could not be reached.")
+    }
+  }
+
+  /** A bot step reported back. */
+  private async finishBotStep(
+    runId: string,
+    index: number,
+    botId: string,
+    outcome: TaskOutcome
+  ) {
+    const run = this.runs.find((r) => r.id === runId)
+    const step = run?.plan[index]
+    // Stopped runs, and re-delivered results, are ignored.
+    if (
+      !run ||
+      run.status !== "running" ||
+      run.steps[index]?.status !== "running" ||
+      step?.kind !== "bot" ||
+      step.botId !== botId
+    ) {
+      return
+    }
+    this.sql`INSERT OR REPLACE INTO pipeline_outputs (run_id, step, output)
+      VALUES (${runId}, ${index}, ${outcome.result})`
+    const passed: string[] = []
+    const notes: string[] = []
+    for (const file of outcome.files ?? []) {
+      if (file.bytes.byteLength > MAX_STORED_FILE_BYTES) {
+        notes.push(`${file.name} was too big to pass on.`)
+        continue
+      }
+      // The tagged `sql` helper takes no blobs.
+      this.ctx.storage.sql.exec(
+        "INSERT INTO pipeline_files (run_id, step, name, bytes) VALUES (?, ?, ?, ?)",
+        runId,
+        index,
+        file.name,
+        file.bytes.slice().buffer
+      )
+      passed.push(file.name)
+    }
+    if (outcome.status !== "done") {
+      this.patchStep(runId, index, {
+        output: clip(outcome.result, MAX_STEP_OUTPUT_IN_STATE),
+      })
+      await this.failStep(
+        runId,
+        index,
+        outcome.error ??
+          (outcome.status === "stopped" ? "It was stopped." : "It failed.")
+      )
+      return
+    }
+    const error = [outcome.error, ...notes].filter(Boolean).join(" ")
+    this.patchStep(runId, index, {
+      status: "done",
+      output: clip(outcome.result, MAX_STEP_OUTPUT_IN_STATE),
+      ...(passed.length ? { files: passed } : {}),
+      ...(error ? { error } : {}),
+      finishedAt: Date.now(),
+    })
+    await this.advanceRun(runId)
+  }
+
+  private async failStep(runId: string, index: number, error: string) {
+    this.patchStep(runId, index, {
+      status: "failed",
+      error,
+      finishedAt: Date.now(),
+    })
+    await this.finishRun(runId, "failed")
+  }
+
+  private async finishRun(
+    runId: string,
+    status: "done" | "failed" | "stopped"
+  ) {
+    const run = this.runs.find((r) => r.id === runId)
+    if (!run) return
+    this.patchRun(runId, {
+      status,
+      finishedAt: Date.now(),
+      steps: run.steps.map((s) =>
+        s.status === "pending" ? { ...s, status: "skipped" } : s
+      ),
+    })
+    // Outputs stay for the run history; files were only for the next step.
+    this.sql`DELETE FROM pipeline_files WHERE run_id = ${runId}`
+    if (status === "stopped") return
+    const failed = run.steps.findIndex((s) => s.status === "failed")
+    const last = run.steps.findLast((s) => s.output)
+    await this.push({
+      title: `Pipeline · ${run.name}`,
+      body:
+        status === "done"
+          ? clip(last?.output?.replace(/\s+/g, " ").trim() || "Finished.", 160)
+          : `Step ${failed + 1} failed: ${clip(run.steps[failed]?.error ?? "", 140)}`,
+      tag: `pipeline-${run.pipelineId}`,
+      url: `/pipelines/${run.pipelineId}`,
+    })
+  }
+
+  /** What a step starts from: the latest finished bot step, or the user's input. */
+  private previousResult(run: PipelineRun, index: number) {
+    for (let i = index - 1; i >= 0; i--) {
+      if (run.plan[i].kind !== "bot" || run.steps[i].status !== "done") {
+        continue
+      }
+      const files = this.sql<{ name: string; bytes: ArrayBuffer }>`
+        SELECT name, bytes FROM pipeline_files
+        WHERE run_id = ${run.id} AND step = ${i}`.map((f): BotAttachment => ({
+        name: f.name,
+        bytes: new Uint8Array(f.bytes),
+      }))
+      return {
+        from: `${run.steps[i].botName ?? "the previous bot"} (step ${i + 1})`,
+        text: this.pipelineOutput(run.id, i) ?? "",
+        files,
+      }
+    }
+    return { from: "the user", text: run.input, files: [] }
+  }
+
+  /** Who sees a step's result next: the next bot, or the user. */
+  private nextRecipient(plan: PipelineStep[], index: number) {
+    for (const step of plan.slice(index + 1)) {
+      if (step.kind === "approval") return "the user, for approval"
+      const bot = this.state.bots.find((b) => b.id === step.botId)
+      if (bot) return `the ${bot.name} bot`
+    }
+    return "the user"
+  }
+
+  private patchRun(runId: string, patch: Partial<PipelineRun>) {
+    this.setState({
+      ...this.state,
+      pipelineRuns: this.runs.map((r) =>
+        r.id === runId ? { ...r, ...patch } : r
+      ),
+    })
+  }
+
+  private patchStep(
+    runId: string,
+    index: number,
+    patch: Partial<PipelineRunStep>
+  ) {
+    const run = this.runs.find((r) => r.id === runId)
+    if (!run) return
+    this.patchRun(runId, {
+      steps: run.steps.map((s, i) => (i === index ? { ...s, ...patch } : s)),
+    })
+  }
+
+  private dropRunData(runId: string) {
+    this.sql`DELETE FROM pipeline_outputs WHERE run_id = ${runId}`
+    this.sql`DELETE FROM pipeline_files WHERE run_id = ${runId}`
   }
 }
 
