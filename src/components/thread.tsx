@@ -17,6 +17,7 @@ import {
   CrawlIcon,
   EnvelopeSimpleIcon,
   PipelineIcon,
+  TerminalIcon,
   WebhooksLogoIcon,
 } from "@/components/icons"
 import { BotAvatar } from "@/components/bot-avatar"
@@ -46,7 +47,7 @@ import type {
   NavigateBrowser,
 } from "@/components/computer-card"
 import type { Block, ToolCall } from "@/lib/message-parts"
-import type { BotState, MessageMeta } from "@/lib/types"
+import type { BotState, MessageMeta, ScriptApproval } from "@/lib/types"
 
 export type OnApproval = (
   approvalId: string,
@@ -81,9 +82,17 @@ interface ThreadProps {
   onApproval?: OnApproval
   onProvideSecret?: OnProvideSecret
   onAnswerChoice?: OnAnswerChoice
+  /** App calls from the bot's scripts, paused for the user's OK. */
+  scriptApprovals?: ScriptApproval[]
+  onScriptApproval?: OnScriptApproval
   /** Id of the first message that was unread when the thread opened. */
   unreadFrom?: string
 }
+
+export type OnScriptApproval = (
+  approval: ScriptApproval,
+  approved: boolean
+) => Promise<void>
 
 /** Hostname of an absolute http(s) link, for its favicon. */
 function linkHost(href: string | undefined) {
@@ -237,6 +246,77 @@ function ApprovalCard({
             Reject
           </Button>
         </div>
+      ) : null}
+    </div>
+  )
+}
+
+/**
+ * A script's app call, paused until the user answers. Not a chat part: the
+ * script runs on its own and can wait across turns and restarts.
+ */
+function ScriptApprovalCard({
+  approval,
+  onScriptApproval,
+}: {
+  approval: ScriptApproval
+  onScriptApproval?: OnScriptApproval
+}) {
+  const [answering, setAnswering] = useState<boolean | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  async function answer(approved: boolean) {
+    if (!onScriptApproval) return
+    setAnswering(approved)
+    setError(null)
+    try {
+      await onScriptApproval(approval, approved)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "That did not go through.")
+      setAnswering(null)
+    }
+  }
+  return (
+    <div className="msg-enter w-full max-w-[640px] rounded-3xl bg-kumo-tint p-4">
+      <p className="text-[15px] font-semibold text-kumo-default">
+        Approval needed
+      </p>
+      <p className="mt-1 text-[15px] text-kumo-default">
+        {approval.purpose ? `${approval.purpose}: ` : "A script "}
+        wants to use {approval.app} ({approval.tool})
+      </p>
+      {approval.argsJson !== "{}" ? (
+        <CodeBlock
+          code={approval.argsJson}
+          lang="json"
+          className="mt-3 max-h-60 rounded-2xl bg-kumo-base p-3"
+        />
+      ) : null}
+      {onScriptApproval ? (
+        <div className="mt-3 flex gap-2">
+          <Button
+            variant="primary"
+            className="btn-ink rounded-full"
+            disabled={answering !== null}
+            loading={answering === true}
+            onClick={() => void answer(true)}
+          >
+            Approve
+          </Button>
+          <Button
+            variant="outline"
+            className="rounded-full"
+            disabled={answering !== null}
+            loading={answering === false}
+            onClick={() => void answer(false)}
+          >
+            Reject
+          </Button>
+        </div>
+      ) : null}
+      {error ? (
+        <p role="alert" className="mt-2 text-sm text-kumo-danger">
+          {error}
+        </p>
       ) : null}
     </div>
   )
@@ -551,7 +631,8 @@ function UserMessage({ message }: { message: UIMessage }) {
     origin?.kind === "email" ||
     origin?.kind === "webhook" ||
     origin?.kind === "app" ||
-    origin?.kind === "crawl"
+    origin?.kind === "crawl" ||
+    origin?.kind === "script"
   ) {
     const [Icon, label] =
       origin.kind === "routine"
@@ -562,7 +643,9 @@ function UserMessage({ message }: { message: UIMessage }) {
             ? [AppWindowIcon, `Changes in ${origin.name}`]
             : origin.kind === "crawl"
               ? [CrawlIcon, `Crawl finished · ${origin.name}`]
-              : [WebhooksLogoIcon, `Webhook · ${origin.name}`]
+              : origin.kind === "script"
+                ? [TerminalIcon, `Script finished · ${origin.name}`]
+                : [WebhooksLogoIcon, `Webhook · ${origin.name}`]
     return (
       <SystemEvent>
         <span className="inline-flex max-w-full items-center gap-1.5 align-middle">
@@ -640,6 +723,8 @@ export function Thread({
   onApproval,
   onProvideSecret,
   onAnswerChoice,
+  scriptApprovals,
+  onScriptApproval,
   unreadFrom,
 }: ThreadProps) {
   // A link to one task's message (from a pipeline run) opens the thread there.
@@ -788,6 +873,18 @@ export function Thread({
               )}
             </div>
           </Fragment>
+        ))}
+        {scriptApprovals?.map((approval) => (
+          <div
+            key={approval.callId}
+            className="flex flex-col gap-3"
+            data-from="bot"
+          >
+            <ScriptApprovalCard
+              approval={approval}
+              onScriptApproval={onScriptApproval}
+            />
+          </div>
         ))}
         {busy && !showsProgress && !waitingOnUser ? (
           <div

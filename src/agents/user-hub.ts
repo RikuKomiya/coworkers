@@ -237,6 +237,26 @@ export class UserHub extends Agent<Env, HubState> {
     await (await this.bot(botId)).answerApproval(approvalId, approved)
   }
 
+  /** A bot's script app calls waiting on the user, for the sidebar. */
+  @callable()
+  async waitingScripts(botId: string) {
+    if (!this.state.bots.some((b) => b.id === botId)) return []
+    return (await this.bot(botId)).waitingScripts()
+  }
+
+  @callable()
+  async answerScriptApproval(
+    botId: string,
+    runId: string,
+    callId: string,
+    approved: boolean
+  ) {
+    if (!this.state.bots.some((b) => b.id === botId)) {
+      throw new Error("No such bot.")
+    }
+    await (await this.bot(botId)).answerScriptApproval(runId, callId, approved)
+  }
+
   @callable()
   async addConnection(input: {
     name: string

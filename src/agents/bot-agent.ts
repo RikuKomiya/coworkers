@@ -1,8 +1,18 @@
-import { Workspace, WorkspaceServiceProxy } from "@cloudflare/computer"
+import {
+  Workspace,
+  WorkspaceServiceProxy,
+  unsafeToRepeat,
+} from "@cloudflare/computer"
 import type {
   DurableObjectStorageLike,
+  WorkspaceModuleCallContext,
+  WorkspaceModuleFactory,
+  WorkspaceRuntimePendingCall,
+  WorkspaceRuntimeResult,
+  WorkspaceRuntimeValue,
   WorkspaceStub,
 } from "@cloudflare/computer"
+import { WorkerJavaScriptBackend } from "@cloudflare/computer/backends/worker-javascript"
 import { WorkerShellBackend } from "@cloudflare/computer/backends/worker-shell"
 import curl from "@cloudflare/computer/shell/curl"
 import jq from "@cloudflare/computer/shell/jq"
@@ -57,6 +67,7 @@ import type {
   MessageMeta,
   MessageOrigin,
   OpenItem,
+  ScriptApproval,
   ProactiveSettings,
   Routine,
   RoutineRun,
@@ -88,11 +99,12 @@ import {
   crawlPrompt,
   emailPrompt,
   routinePrompt,
+  scriptPrompt,
   turnContext,
   webhookPrompt,
   withSentTimes,
 } from "./prompt"
-import type { ReportedEntry } from "./prompt"
+import type { ReportedEntry, ScriptOutcome } from "./prompt"
 import { frameCode, navCode } from "./browser-frame"
 import type { BrowserNav, FrameResult, SeenTab } from "./browser-frame"
 import { finishTeachingCode, startTeachingCode } from "./teach"
@@ -134,6 +146,7 @@ const TOOL_CLASS: Record<string, ActionClass> = {
   edit: "files",
   delete: "files",
   exec: "shell",
+  run_js: "shell",
   browser_markdown: "browse",
   browser_extract: "browse",
   browser_links: "browse",
@@ -169,6 +182,12 @@ const APPROVAL_REMIND_MS = 4 * 3_600_000
 const APPROVAL_EXPIRE_MS = 24 * 3_600_000
 /** exec returns a job id when a command takes longer than this. */
 const EXEC_WAIT_MS = 60_000
+/** How long a script may run, not counting time paused for approval. */
+const SCRIPT_TIMEOUT_MS = 10 * 60_000
+/** A detached script not heard from this long past its timeout is given up. */
+const SCRIPT_GRACE_MS = 15 * 60_000
+/** How often detached scripts are checked on, and resumed after a restart. */
+const SCRIPT_POLL_S = 60
 /** How much of a watched output is kept and shown to the model, in characters. */
 const WATCH_SAMPLE_CHARS = 3_000
 /** Past this many app tools, the bot searches for tools instead of seeing all. */
@@ -195,6 +214,7 @@ const READ_ONLY_TOOLS = new Set([
   "read_history",
   "ask_user",
   "shell_job",
+  "script_wait",
   "was_reported",
   "list_apps",
   "app_data_list",
@@ -535,8 +555,25 @@ export class BotAgent extends Think<Env, BotState> {
   #appToolNames = new Set<string>()
 
   /**
+   * Scripts (run_js): JavaScript in a fresh Dynamic Worker. "replay" makes a
+   * run survive a deploy or crash: it restarts and every call it already
+   * made is answered from a journal, so nothing it did happens twice. It is
+   * also what lets an app call pause for the user's OK (see ws:apps).
+   */
+  #js = new WorkerJavaScriptBackend({
+    id: "js",
+    loader: this.env.LOADER,
+    egress: { mode: "direct" },
+    onInterrupt: "replay",
+    defaultTimeoutMs: SCRIPT_TIMEOUT_MS,
+    maxTimeoutMs: SCRIPT_TIMEOUT_MS,
+    modules: { "ws:apps": this.appsModule() },
+    onWait: (call) => this.scriptWaiting(call),
+  })
+
+  /**
    * The bot's computer: a durable filesystem in this Durable Object's SQLite
-   * plus a shell that runs in a Dynamic Worker (no container).
+   * plus a shell and a JavaScript runtime in Dynamic Workers (no container).
    */
   override workspace = new Workspace({
     storage: this.ctx.storage as unknown as DurableObjectStorageLike,
@@ -551,6 +588,7 @@ export class BotAgent extends Think<Env, BotState> {
         // which pushes the bot onto the browser for plain HTTP work.
         egress: { mode: "direct" },
       }),
+      this.#js,
     ],
   })
 
@@ -565,6 +603,10 @@ export class BotAgent extends Think<Env, BotState> {
   /** Shell commands share one backend, so they run one at a time. */
   #shell: Promise<unknown> = Promise.resolve()
   #loopGuard = new LoopGuard()
+  /** Results of scripts this isolate started or is watching, by run id. */
+  #scripts = new Map<string, Promise<WorkspaceRuntimeResult<"utf8">>>()
+  /** run_js and script_wait calls to wake when their script pauses. */
+  #scriptWaiters = new Map<string, Set<() => void>>()
   /** Shell commands still running after exec returned. Lost on restart. */
   #jobs = new Map<
     string,
@@ -728,6 +770,18 @@ export class BotAgent extends Think<Env, BotState> {
       title TEXT NOT NULL,
       image TEXT NOT NULL
     )`
+    // Scripts (run_js), so one that outlives its turn, a restart or a wait
+    // for approval still gets its result back to the bot. "running": a turn
+    // is waiting on it. "detached": the result comes back as a message.
+    this.sql`CREATE TABLE IF NOT EXISTS script_runs (
+      id TEXT PRIMARY KEY,
+      purpose TEXT NOT NULL,
+      started_at INTEGER NOT NULL,
+      answered_at INTEGER,
+      finished_at INTEGER,
+      status TEXT NOT NULL,
+      background INTEGER NOT NULL
+    )`
     this.apps.init()
     // Bots created before proactive work, skills or apps existed.
     if (!this.state.proactive || !this.state.skills || !this.state.apps) {
@@ -752,6 +806,11 @@ export class BotAgent extends Think<Env, BotState> {
     if (!this.getSchedules().some((s) => s.callback === "sweepStuck")) {
       await this.scheduleEvery(15 * 60, "sweepStuck")
     }
+    // No turn survives a restart, but its scripts do (they replay), so
+    // their results come back as messages. pollScripts resumes them.
+    this
+      .sql`UPDATE script_runs SET status = 'detached' WHERE status = 'running'`
+    if (this.openScripts().length) await this.ensureScriptPoll(1)
     // The hub may still hold a status from before the restart. A bot the hub
     // does not know yet (mid-create) is ignored there.
     if (this.name) void this.report({ status: this.state.status })
@@ -999,9 +1058,7 @@ export class BotAgent extends Think<Env, BotState> {
       instructions: `${system}\n\n${context}`,
       messages: withSentTimes(
         ctx.messages,
-        this.messages
-          .filter((m) => m.role === "user")
-          .map((m) => metaOf(m).at),
+        this.messages.filter((m) => m.role === "user").map((m) => metaOf(m).at),
         this.state.proactive.timezone
       ),
       tools: this.#appTools,
@@ -1210,16 +1267,16 @@ export class BotAgent extends Think<Env, BotState> {
     const tools: ToolSet = {
       ...createAITools({
         workspace: this.workspace,
-        shell: {
-          defaultBackend: "shell",
-          backends: {
-            shell: {
-              description:
-                "just-bash in a Dynamic Worker. Starts instantly and has internet access. Has cat, ls, grep, sed, awk, jq, sort, head, tail, find, curl and git. Use curl for public APIs and plain HTTP. Cannot run npm, node, python or other binaries.",
-            },
+        // Shell only: scripts go through run_js, which tracks each run so
+        // its result outlives the turn.
+        exec: {
+          shell: {
+            description:
+              "just-bash in a Dynamic Worker. Starts instantly and has internet access. Has cat, ls, grep, sed, awk, jq, sort, head, tail, find, curl and git. Use curl for public APIs and plain HTTP. Cannot run npm, node, python or other binaries.",
           },
         },
       }),
+      ...this.scriptTools(),
       ...this.browser.tools,
       ...this.webTools(),
       // No app tools here: beforeTurn adds them, and Think appends them
@@ -2663,6 +2720,510 @@ export class BotAgent extends Think<Env, BotState> {
     }
   }
 
+  // ── Scripts ─────────────────────────────────────────────────────────
+
+  private scriptTools(): ToolSet {
+    return {
+      run_js: tool({
+        description: [
+          "Run JavaScript in a fresh sandbox and get its result. For data work, parsing, math, and many calls to the user's apps in a loop. Use exec for plain shell work.",
+          "Runs survive restarts and deploys. An app call the user's rules ask about pauses the script until the user answers, which can take hours: run_js then says it is waiting, and the result comes back to you as a message.",
+          this.#js.description.replaceAll("`command`", "`code`"),
+        ].join("\n\n"),
+        inputSchema: z.object({
+          code: z.string().describe("ECMAScript module source"),
+          purpose: z
+            .string()
+            .max(80)
+            .describe(
+              "What it does in a few words, shown to the user if it needs their OK, e.g. 'Close stale Linear issues'"
+            ),
+          input: z
+            .record(z.string(), z.unknown())
+            .optional()
+            .describe("Passed to the default export"),
+        }),
+        execute: async ({ code, purpose, input }) => {
+          const id = await this.startScript(code, purpose, input)
+          return this.awaitScript(id)
+        },
+      }),
+      script_wait: tool({
+        description:
+          "Wait for a script that run_js reported as still running or waiting. Waits up to 60 seconds per call and returns its result once it finishes.",
+        inputSchema: z.object({
+          run: z.string().describe("The run id run_js returned"),
+        }),
+        execute: async ({ run }) => {
+          const row = this.sql<{ status: string }>`SELECT status
+            FROM script_runs WHERE id = ${run}`[0]
+          if (!row) return { error: "No such script." }
+          if (row.status === "done") {
+            return {
+              error:
+                "That script already finished and its result was given to you. Look for it in this chat.",
+            }
+          }
+          this.sql`UPDATE script_runs SET status = 'running' WHERE id = ${run}`
+          return this.awaitScript(run)
+        },
+      }),
+    }
+  }
+
+  /**
+   * `ws:apps` for scripts: the user's connected-app tools under the same
+   * rules as when the bot calls them directly. One the rules ask about
+   * pauses the script, durably, until the user answers (scriptWaiting).
+   */
+  private appsModule(): WorkspaceModuleFactory {
+    const factory = () => ({
+      list: async (): Promise<WorkspaceRuntimeValue> => {
+        const { tools }: AppCatalog = await (await this.hub()).appCatalog()
+        return tools.map((t) => ({
+          name: appToolName(t.connectionId, t.name),
+          app: t.connectionName,
+          description: clip(t.description, 300),
+          readOnly: t.readOnly,
+        }))
+      },
+      // Reads are safe to repeat after an interruption; anything else is
+      // not, so a restart while it is in flight fails the run instead of
+      // possibly sending it twice.
+      read: (
+        args: readonly WorkspaceRuntimeValue[],
+        ctx: WorkspaceModuleCallContext
+      ) => this.scriptAppCall(args, ctx, "read"),
+      call: unsafeToRepeat(
+        (
+          args: readonly WorkspaceRuntimeValue[],
+          ctx: WorkspaceModuleCallContext
+        ) => this.scriptAppCall(args, ctx, "call")
+      ),
+    })
+    return Object.assign(factory, {
+      description: [
+        "- `ws:apps`: the user's connected apps (the same tools you have as tool_c… tools). `list()` returns `[{ name, app, description, readOnly }]`.",
+        "  `read(name, args)` calls a readOnly tool; `call(name, args)` calls any tool. Both return the tool's result and throw if it fails, if the user's rules block it, or if the user rejects it.",
+        "  A call the user's rules ask about pauses the script until they answer, so batch the work into one script rather than one per item.",
+      ].join("\n"),
+    })
+  }
+
+  private async scriptAppCall(
+    args: readonly WorkspaceRuntimeValue[],
+    ctx: WorkspaceModuleCallContext,
+    mode: "read" | "call"
+  ): Promise<WorkspaceRuntimeValue> {
+    const [name, input = {}] = args
+    if (typeof name !== "string") {
+      throw new Error(
+        "Pass a tool name from list(), then an object of arguments."
+      )
+    }
+    if (input === null || typeof input !== "object" || Array.isArray(input)) {
+      throw new Error("Arguments must be an object.")
+    }
+    const hub = await this.hub()
+    const catalog: AppCatalog = await hub.appCatalog()
+    const t = catalog.tools.find(
+      (t) => appToolName(t.connectionId, t.name) === name
+    )
+    if (!t) {
+      throw new Error(
+        `No connected app has a tool named ${name}. Call list() to see them.`
+      )
+    }
+    if (mode === "read" && !t.readOnly) {
+      throw new Error(`${name} can change things, so use call() for it.`)
+    }
+    const policy = this.scriptAppPolicy(t.readOnly)
+    if (policy === "block") {
+      throw new Error(
+        `The user's rules do not allow ${t.connectionName} here. Do not retry.`
+      )
+    }
+    if (policy === "ask") {
+      // Everything above runs again when the answer arrives, so it must
+      // stay free of side effects.
+      const answer = await ctx.interrupt<{
+        approved?: boolean
+        expired?: boolean
+      }>({
+        kind: "app",
+        app: t.connectionName,
+        tool: t.name,
+        args: input,
+      })
+      if (!answer?.approved) {
+        throw new Error(
+          answer?.expired
+            ? `Nobody approved ${t.connectionName} (${t.name}) within a day, so it was not done.`
+            : `The user rejected ${t.connectionName} (${t.name}). It was not done.`
+        )
+      }
+    }
+    const result = unwrapToolResult(
+      await hub.callAppTool(t.connectionId, t.name, input)
+    )
+    // Only plain JSON crosses back into the script.
+    return JSON.parse(JSON.stringify(result ?? null)) as WorkspaceRuntimeValue
+  }
+
+  /** decide() for an app call from a script, which has no tool name of its own. */
+  private scriptAppPolicy(readOnly: boolean): RulePolicy {
+    const policy = this.state.rules.apps
+    if (policy === "block" || !this.isBackgroundTurn()) return policy
+    if (readOnly || this.state.proactive.appsInBackground === true)
+      return "allow"
+    return policy === "ask" ? "block" : "allow"
+  }
+
+  private async startScript(
+    code: string,
+    purpose: string,
+    input?: Record<string, unknown>
+  ) {
+    const id = `js_${crypto.randomUUID().slice(0, 8)}`
+    this
+      .sql`INSERT INTO script_runs (id, purpose, started_at, status, background)
+      VALUES (${id}, ${purpose}, ${Date.now()}, 'running', ${this.isBackgroundTurn() ? 1 : 0})`
+    try {
+      const run = await this.workspace.runtime.exec(code, {
+        backend: "js",
+        id,
+        encoding: "utf8",
+        timeoutMs: SCRIPT_TIMEOUT_MS,
+        output: { maxBytes: 16 * 1024, maxLines: 400 },
+        ...(input ? { input: input as WorkspaceRuntimeValue } : {}),
+      })
+      this.watchScript(id, run.result())
+    } catch (err) {
+      this
+        .sql`UPDATE script_runs SET status = 'done', finished_at = ${Date.now()}
+        WHERE id = ${id}`
+      throw err
+    }
+    return id
+  }
+
+  /** Deliver a script's result whenever it settles, if no turn is waiting. */
+  private watchScript(
+    id: string,
+    result: Promise<WorkspaceRuntimeResult<"utf8">>
+  ) {
+    this.#scripts.set(id, result)
+    result
+      .then(
+        (r) => this.scriptSettled(id, r),
+        (err: unknown) =>
+          this.scriptSettled(id, {
+            lost: err instanceof Error ? err.message : String(err),
+          })
+      )
+      .catch((err) => console.error("Reporting a script failed", err))
+      .finally(() => this.#scripts.delete(id))
+  }
+
+  /** A script's result, from this isolate or, after a restart, the runtime. */
+  private scriptResult(id: string) {
+    const known = this.#scripts.get(id)
+    if (known) return known
+    const result = this.workspace.runtime
+      .getExec(id, { backend: "js", encoding: "utf8" })
+      .then((run) => run.result())
+    this.watchScript(id, result)
+    return result
+  }
+
+  /**
+   * Hold the tool call until the script finishes, pauses for approval, or
+   * a minute passes. A pause hands it off: the result comes back as a
+   * message, so the turn does not sit on an answer that may take hours.
+   */
+  private async awaitScript(id: string) {
+    let approvals = (this.state.scriptApprovals ?? []).filter(
+      (a) => a.runId === id
+    )
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let wake = () => {}
+    const outcome = approvals.length
+      ? ("waiting" as const)
+      : await Promise.race([
+          this.scriptResult(id).then(
+            (result) => ({ result }),
+            (error: unknown) => ({ error })
+          ),
+          new Promise<"timeout">((resolve) => {
+            timer = setTimeout(() => resolve("timeout"), EXEC_WAIT_MS)
+          }),
+          new Promise<"waiting">((resolve) => {
+            wake = () => resolve("waiting")
+            const set = this.#scriptWaiters.get(id) ?? new Set()
+            set.add(wake)
+            this.#scriptWaiters.set(id, set)
+          }),
+        ])
+    clearTimeout(timer)
+    this.#scriptWaiters.get(id)?.delete(wake)
+    if (outcome === "timeout") {
+      return {
+        running: true,
+        run: id,
+        notice:
+          "Still running. Call script_wait with this id to wait for the result. Do not run it again.",
+      }
+    }
+    if (outcome === "waiting") {
+      this.sql`UPDATE script_runs SET status = 'detached'
+        WHERE id = ${id} AND status = 'running'`
+      if (!approvals.length) {
+        approvals = (await this.syncScriptApprovals()).filter(
+          (a) => a.runId === id
+        )
+      }
+      return {
+        waitingForApproval: true,
+        run: id,
+        waitingOn: approvals.map((a) => `${a.app}: ${a.tool}`),
+        notice:
+          "Paused until the user approves it in the app. Tell them what it is waiting on, then end your turn: the result comes back to you as a message when the script finishes. Do not run it again.",
+      }
+    }
+    this.sql`UPDATE script_runs SET status = 'done', finished_at = ${Date.now()}
+      WHERE id = ${id}`
+    if ("error" in outcome) {
+      return {
+        run: id,
+        error:
+          outcome.error instanceof Error
+            ? outcome.error.message
+            : String(outcome.error),
+      }
+    }
+    const { result } = outcome
+    return {
+      run: id,
+      exitCode: result.exitCode,
+      ...(result.value !== undefined ? { result: result.value } : {}),
+      stdout: result.stdout,
+      stderr: result.stderr,
+      ...(result.truncated ? { truncated: result.truncated } : {}),
+    }
+  }
+
+  /** A detached script finished: hand its result to the bot as a message. */
+  private async scriptSettled(
+    id: string,
+    result: WorkspaceRuntimeResult<"utf8"> | { lost: string }
+  ) {
+    const row = this.sql<{
+      purpose: string
+      status: string
+      background: number
+    }>`
+      SELECT purpose, status, background FROM script_runs WHERE id = ${id}`[0]
+    // "running": a turn collects it. "done": already delivered.
+    if (row?.status !== "detached") return
+    this.sql`UPDATE script_runs SET status = 'done', finished_at = ${Date.now()}
+      WHERE id = ${id}`
+    const outcome: ScriptOutcome =
+      "lost" in result
+        ? result
+        : {
+            exitCode: result.exitCode,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            value: result.value,
+          }
+    await this.submitAs(
+      { kind: "script", name: clip(row.purpose, 60) },
+      scriptPrompt({
+        runId: id,
+        purpose: row.purpose,
+        outcome,
+        background: row.background === 1,
+      }),
+      { background: row.background === 1, key: `script:${id}` }
+    )
+  }
+
+  /** The turn ended: scripts it left running report back on their own. */
+  private detachScripts() {
+    const rows = this.sql<{ id: string }>`SELECT id FROM script_runs
+      WHERE status = 'running'`
+    if (!rows.length) return
+    this
+      .sql`UPDATE script_runs SET status = 'detached' WHERE status = 'running'`
+    // One that already finished while a turn held it is delivered now.
+    for (const { id } of rows) this.scriptResult(id).catch(() => undefined)
+  }
+
+  private openScripts() {
+    return this.sql<{
+      id: string
+      started_at: number
+      answered_at: number | null
+    }>`
+      SELECT id, started_at, answered_at FROM script_runs WHERE status = 'detached'`
+  }
+
+  /** One pending poll at most; the one firing now does not count. */
+  private async ensureScriptPoll(delaySeconds = SCRIPT_POLL_S) {
+    const now = Date.now() / 1000
+    if (
+      this.getSchedules().some(
+        (s) => s.callback === "pollScripts" && s.time > now
+      )
+    ) {
+      return
+    }
+    await this.schedule(delaySeconds, "pollScripts")
+  }
+
+  /**
+   * Schedule callback. Resumes scripts a restart interrupted (replaying
+   * them), watches the rest, and gives up on any that went silent. Scripts
+   * only waiting on the user need no polling: answering them restarts it.
+   */
+  async pollScripts() {
+    const rows = this.openScripts()
+    // Bots that never ran a script do not wake the runtime.
+    if (!rows.length && !this.state.scriptApprovals?.length) return
+    const approvals = await this.syncScriptApprovals()
+    if (!rows.length) return
+    await this.workspace.runtime.recover()
+    const waiting = new Set(approvals.map((a) => a.runId))
+    const now = Date.now()
+    let active = false
+    for (const row of rows) {
+      if (waiting.has(row.id)) continue
+      const since = Math.max(row.started_at, row.answered_at ?? 0)
+      if (now - since > SCRIPT_TIMEOUT_MS + SCRIPT_GRACE_MS) {
+        await this.scriptSettled(row.id, { lost: "it stopped responding" })
+        continue
+      }
+      active = true
+      this.scriptResult(row.id).catch(() => undefined)
+    }
+    if (active) await this.ensureScriptPoll()
+  }
+
+  /** onWait: a script's app call is now paused for the user. */
+  private async scriptWaiting(call: WorkspaceRuntimePendingCall) {
+    for (const wake of this.#scriptWaiters.get(call.id) ?? []) wake()
+    const approvals = await this.syncScriptApprovals()
+    const approval = approvals.find((a) => a.callId === call.callId)
+    // In a turn, the bot tells the user itself.
+    if (approval && !this.#turnActive) {
+      void this.notify(
+        `Waiting for your OK: ${approval.app} (${approval.tool})`
+      )
+    }
+  }
+
+  /** Mirror the runtime's paused calls into state, for the UI. */
+  private async syncScriptApprovals(): Promise<ScriptApproval[]> {
+    const pending = await this.workspace.runtime.pending()
+    const approvals = pending.flatMap((call) => {
+      const p = call.payload as {
+        kind?: string
+        app?: string
+        tool?: string
+        args?: Record<string, unknown>
+      } | null
+      if (p?.kind !== "app") return []
+      const row = this.sql<{ purpose: string }>`SELECT purpose FROM script_runs
+        WHERE id = ${call.id}`[0]
+      return [
+        {
+          runId: call.id,
+          callId: call.callId,
+          purpose: row?.purpose ?? "",
+          app: String(p.app ?? ""),
+          tool: String(p.tool ?? ""),
+          argsJson: JSON.stringify(p.args ?? {}, null, 2),
+          since: call.since,
+        },
+      ]
+    })
+    if (
+      JSON.stringify(approvals) !==
+      JSON.stringify(this.state.scriptApprovals ?? [])
+    ) {
+      const busy =
+        this.state.status === "thinking" || this.state.status === "working"
+      const status: BotStatus = busy
+        ? this.state.status
+        : approvals.length || this.hasPendingApproval()
+          ? "action_needed"
+          : "idle"
+      this.setState({ ...this.state, scriptApprovals: approvals, status })
+      void this.report({ status })
+    }
+    return approvals
+  }
+
+  /** Approval cards in the chat, or app calls from scripts. */
+  private needsUser() {
+    return (
+      this.hasPendingApproval() || (this.state.scriptApprovals?.length ?? 0) > 0
+    )
+  }
+
+  /** Answer a script's paused app call, from the thread or the sidebar. */
+  @callable()
+  async answerScriptApproval(runId: string, callId: string, approved: boolean) {
+    try {
+      await this.workspace.runtime.respond(
+        runId,
+        callId,
+        { approved },
+        { backend: "js" }
+      )
+    } catch (err) {
+      await this.syncScriptApprovals()
+      if ((err as { code?: string }).code === "ENOTWAITING") {
+        throw new Error("That call is no longer waiting.")
+      }
+      throw err
+    }
+    this
+      .sql`UPDATE script_runs SET answered_at = ${Date.now()} WHERE id = ${runId}`
+    this.ctx.storage.kv.delete(`script_reminded:${callId}`)
+    await this.syncScriptApprovals()
+    // It resumes now; make sure its result is watched and reported.
+    this.scriptResult(runId).catch(() => undefined)
+    await this.ensureScriptPoll()
+  }
+
+  /** sweepStuck's part for scripts: remind, expire, and resume. */
+  private async sweepScripts(now: number) {
+    for (const a of this.state.scriptApprovals ?? []) {
+      if (now - a.since > APPROVAL_EXPIRE_MS) {
+        await this.workspace.runtime
+          .respond(
+            a.runId,
+            a.callId,
+            { approved: false, expired: true },
+            { backend: "js" }
+          )
+          .catch(() => undefined)
+        this.ctx.storage.kv.delete(`script_reminded:${a.callId}`)
+        this.scriptResult(a.runId).catch(() => undefined)
+        continue
+      }
+      if (
+        now - a.since > APPROVAL_REMIND_MS &&
+        this.ctx.storage.kv.get(`script_reminded:${a.callId}`) === undefined
+      ) {
+        this.ctx.storage.kv.put(`script_reminded:${a.callId}`, now)
+        void this.notify(`Still waiting for your OK: ${a.app} (${a.tool})`)
+      }
+    }
+    await this.pollScripts()
+  }
+
   /** Keep long turns inside the context window (see shapeToolResults). */
   override beforeStep(ctx: PrepareStepContext): StepConfig | void {
     const messages = shapeToolResults(ctx.messages)
@@ -2791,7 +3352,9 @@ export class BotAgent extends Think<Env, BotState> {
       (p) => "state" in p && p.state === "approval-requested"
     )
     const text = textOf(result.message)
-    const status: BotStatus = waiting ? "action_needed" : "idle"
+    this.detachScripts()
+    const status: BotStatus =
+      waiting || this.state.scriptApprovals?.length ? "action_needed" : "idle"
     if (waiting) this.noteApprovalsAsked(result.message)
     const task = metaOf(trigger).task
     // An approval card keeps the turn open; the result goes back once the
@@ -2901,6 +3464,7 @@ export class BotAgent extends Think<Env, BotState> {
 
   override onChatError(error: unknown) {
     this.#turnActive = false
+    this.detachScripts()
     void this.setStatus("idle")
     return error
   }
@@ -2933,7 +3497,7 @@ export class BotAgent extends Think<Env, BotState> {
     ) {
       this.setState({
         ...this.state,
-        status: this.hasPendingApproval() ? "action_needed" : "idle",
+        status: this.needsUser() ? "action_needed" : "idle",
       })
     }
     // The hub is only a cache of this; heal it on every sweep.
@@ -2981,7 +3545,12 @@ export class BotAgent extends Think<Env, BotState> {
         console.error("Expiring an approval failed", err)
       }
     }
-    if (this.state.status === "action_needed" && !this.hasPendingApproval()) {
+    try {
+      await this.sweepScripts(now)
+    } catch (err) {
+      console.error("Checking on scripts failed", err)
+    }
+    if (this.state.status === "action_needed" && !this.needsUser()) {
       await this.setStatus("idle")
     }
   }
@@ -3172,6 +3741,11 @@ export class BotAgent extends Think<Env, BotState> {
     if (!message) return null
     const parts = message.parts.filter((p) => pendingApprovalId(p))
     return parts.length ? { ...message, parts } : null
+  }
+
+  /** Script app calls waiting on the user, for the sidebar. */
+  waitingScripts(): ScriptApproval[] {
+    return this.state.scriptApprovals ?? []
   }
 
   /**

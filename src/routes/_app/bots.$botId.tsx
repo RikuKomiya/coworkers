@@ -39,7 +39,7 @@ import { botInstanceName } from "@/lib/types"
 import type { UIMessage } from "ai"
 import type { BotAgent } from "@/agents/bot-agent"
 import type { BrowserNav } from "@/components/computer-card"
-import type { OnApproval } from "@/components/thread"
+import type { OnApproval, OnScriptApproval } from "@/components/thread"
 import type { BotState } from "@/lib/types"
 
 interface ApprovalResponse {
@@ -321,6 +321,16 @@ function LiveBot({
     [agent]
   )
 
+  const onScriptApproval = useCallback<OnScriptApproval>(
+    (approval, approved) =>
+      agent.stub.answerScriptApproval(
+        approval.runId,
+        approval.callId,
+        approved
+      ),
+    [agent]
+  )
+
   const onAttach = useCallback(
     async (file: File) => {
       const bytes = new Uint8Array(await file.arrayBuffer())
@@ -346,6 +356,8 @@ function LiveBot({
         onApproval={onApproval}
         onProvideSecret={onProvideSecret}
         onAnswerChoice={onAnswerChoice}
+        scriptApprovals={state.scriptApprovals}
+        onScriptApproval={onScriptApproval}
         unreadFrom={unreadFrom}
       />
       {chat.error ? (

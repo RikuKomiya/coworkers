@@ -263,6 +263,29 @@ export interface BotState {
   model?: string | null
   /** Last time the bot finished background work, for the settings panel. */
   lastCheckIn?: number
+  /** App calls from the bot's scripts, paused until the user answers. */
+  scriptApprovals?: ScriptApproval[]
+}
+
+/**
+ * A connected-app call made by one of the bot's scripts (run_js) that its
+ * rules say to ask about. The script is paused, durably, until it is
+ * answered.
+ */
+export interface ScriptApproval {
+  /** The script run the call belongs to. */
+  runId: string
+  /** Pass with runId to answer it. */
+  callId: string
+  /** What the script is for, as the bot described it. */
+  purpose: string
+  /** App and tool, as the user knows them. */
+  app: string
+  tool: string
+  /** The call's arguments, as pretty-printed JSON. */
+  argsJson: string
+  /** Unix ms when it started waiting. */
+  since: number
 }
 
 /**
@@ -280,7 +303,8 @@ export interface MessageOrigin {
     | "app"
     | "crawl"
     | "pipeline"
-  /** Bot, routine or pipeline name, email sender, webhook source, app name, or crawled host. */
+    | "script"
+  /** Bot, routine or pipeline name, email sender, webhook source, app name, crawled host, or what a script was for. */
   name: string
   avatar?: BotAvatarKind
 }

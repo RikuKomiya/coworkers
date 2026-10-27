@@ -37,6 +37,13 @@ Things that will bite you:
 - **Never add the `experimental` compatibility flag.** `@cloudflare/computer`'s
   README asks for it, but Cloudflare rejects any deploy that sets it
   (error 10021), so nobody could deploy Coworkers.
+- **Scripts (`run_js`) replay after a restart.** The JavaScript backend runs
+  with `onInterrupt: "replay"`: a run cut off by a deploy restarts and every
+  host call it already made is answered from a journal. Host module
+  functions (`ws:*`) must therefore be safe to run again up to their
+  `ctx.interrupt()`, and anything with side effects that cannot dedupe on
+  `ctx.callId` must be wrapped in `unsafeToRepeat()`. `script_runs` tracks
+  each run so its result reaches the bot as a message once its turn is gone.
 - **`cf dev` needs a Cloudflare login** because `AI` and `BROWSER` are
   remote-only bindings. The dev server uses Wrangler's login
   (`npx wrangler login`), which can differ from `cf auth login`.

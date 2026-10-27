@@ -8,11 +8,13 @@ import { useHub } from "@/lib/hub-context"
 import { describeCall, toBlocks } from "@/lib/message-parts"
 import type { ReactElement } from "react"
 import type { ToolCall } from "@/lib/message-parts"
-import type { BotSummary } from "@/lib/types"
+import type { BotSummary, ScriptApproval } from "@/lib/types"
 
 interface Waiting {
   /** Plain approval cards, which can be answered right here. */
   calls: ToolCall[]
+  /** App calls from scripts, which can too. */
+  scripts: ScriptApproval[]
   /** Questions, credentials and hand-offs, which need the chat. */
   others: number
 }
@@ -38,14 +40,14 @@ export function ApprovalPopover({
     if (!open) return
     let current = true
     setError(null)
-    hub.waitingParts(bot.id).then(
-      (message) => {
+    Promise.all([hub.waitingParts(bot.id), hub.waitingScripts(bot.id)]).then(
+      ([message, scripts]) => {
         if (!current) return
         const blocks = message ? toBlocks(message) : []
         const calls = blocks.flatMap((b) =>
           b.kind === "approval" ? [b.call] : []
         )
-        setWaiting({ calls, others: blocks.length - calls.length })
+        setWaiting({ calls, scripts, others: blocks.length - calls.length })
       },
       () => current && setError("Could not load what it is waiting on.")
     )
@@ -62,7 +64,25 @@ export function ApprovalPopover({
       await hub.answerApproval(bot.id, call.approvalId, approved)
       const rest = waiting?.calls.filter((c) => c.id !== call.id) ?? []
       setWaiting((w) => (w ? { ...w, calls: rest } : w))
-      if (rest.length === 0 && !waiting?.others) setOpen(false)
+      if (rest.length === 0 && !waiting?.scripts.length && !waiting?.others)
+        setOpen(false)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "That did not go through.")
+    } finally {
+      setAnswering(null)
+    }
+  }
+
+  async function answerScript(approval: ScriptApproval, approved: boolean) {
+    setAnswering(approval.callId)
+    setError(null)
+    try {
+      await hub.answerScriptApproval(bot.id, approval, approved)
+      const rest =
+        waiting?.scripts.filter((s) => s.callId !== approval.callId) ?? []
+      setWaiting((w) => (w ? { ...w, scripts: rest } : w))
+      if (rest.length === 0 && !waiting?.calls.length && !waiting?.others)
+        setOpen(false)
     } catch (err) {
       setError(err instanceof Error ? err.message : "That did not go through.")
     } finally {
@@ -128,8 +148,47 @@ export function ApprovalPopover({
               </div>
             </div>
           ))}
+          {waiting?.scripts.map((approval) => (
+            <div key={approval.callId} className="flex flex-col gap-2 pt-2">
+              <p className="text-sm text-kumo-default">
+                {approval.purpose ? `${approval.purpose}: ` : "A script "}
+                wants to use {approval.app} ({approval.tool})
+              </p>
+              {approval.argsJson !== "{}" ? (
+                <CodeBlock
+                  code={approval.argsJson}
+                  lang="json"
+                  className="max-h-40 rounded-xl bg-kumo-tint p-2.5 text-xs"
+                />
+              ) : null}
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="primary"
+                  className="btn-ink rounded-full"
+                  disabled={answering !== null}
+                  loading={answering === approval.callId}
+                  onClick={() => void answerScript(approval, true)}
+                >
+                  Approve
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="rounded-full"
+                  disabled={answering !== null}
+                  onClick={() => void answerScript(approval, false)}
+                >
+                  Reject
+                </Button>
+              </div>
+            </div>
+          ))}
         </div>
-        {waiting && waiting.calls.length === 0 && waiting.others === 0 ? (
+        {waiting &&
+        waiting.calls.length === 0 &&
+        waiting.scripts.length === 0 &&
+        waiting.others === 0 ? (
           <p className="pt-2 text-sm text-kumo-subtle">
             Nothing is waiting anymore.
           </p>

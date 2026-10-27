@@ -10,6 +10,7 @@ import type {
   PipelineDraft,
   PipelineRun,
   PushSubscriptionData,
+  ScriptApproval,
 } from "@/lib/types"
 import type { ModelSettings, ModelTestResult } from "@/lib/models"
 import type { Viewer } from "@/lib/server-fns"
@@ -34,6 +35,13 @@ interface HubContextValue {
   answerApproval: (
     botId: string,
     approvalId: string,
+    approved: boolean
+  ) => Promise<void>
+  /** A bot's script app calls waiting on the user. */
+  waitingScripts: (botId: string) => Promise<ScriptApproval[]>
+  answerScriptApproval: (
+    botId: string,
+    approval: ScriptApproval,
     approved: boolean
   ) => Promise<void>
   addConnection: (input: NewConnection) => Promise<Connection>
@@ -119,6 +127,8 @@ export function StaticHubProvider({
       markRead: () => {},
       waitingParts: notConnected,
       answerApproval: notConnected,
+      waitingScripts: notConnected,
+      answerScriptApproval: notConnected,
       addConnection: notConnected,
       removeConnection: notConnected,
       refreshConnections: () => {},
@@ -152,6 +162,14 @@ export function LiveHubProvider({ viewer, initial, children }: ProviderProps) {
       waitingParts: (botId) => agent.stub.waitingParts(botId),
       answerApproval: (botId, approvalId, approved) =>
         agent.stub.answerApproval(botId, approvalId, approved),
+      waitingScripts: (botId) => agent.stub.waitingScripts(botId),
+      answerScriptApproval: (botId, approval, approved) =>
+        agent.stub.answerScriptApproval(
+          botId,
+          approval.runId,
+          approval.callId,
+          approved
+        ),
       addConnection: (input) => agent.stub.addConnection(input),
       removeConnection: (id) => agent.stub.removeConnection(id),
       refreshConnections: () => void agent.stub.refreshConnections(),
