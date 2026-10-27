@@ -263,6 +263,145 @@
 }
 
 /*
+ * Pipeline runs. Each step is a capsule; the one being worked on wears a
+ * ring that slides to the next capsule (transform + height, placed from
+ * script like the tabs pill). Steps that finish while the page is open pop their mark in;
+ * marks already there on load do not.
+ */
+.step-capsule {
+  border-radius: 16px;
+  background: var(--color-kumo-base);
+  box-shadow:
+    0 0 0 1px var(--color-kumo-line),
+    0 1px 2px oklch(0 0 0 / 0.04),
+    0 2px 8px oklch(0 0 0 / 0.04);
+}
+
+/* A ring over the capsule being worked on; it slides to the next one. */
+.step-highlight {
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  z-index: 1;
+  border-radius: 16px;
+  pointer-events: none;
+  box-shadow:
+    0 0 0 1.5px
+      color-mix(in oklch, var(--text-color-kumo-default) 30%, transparent),
+    0 6px 20px oklch(0 0 0 / 0.06);
+  opacity: 0;
+  transition:
+    transform var(--duration-slow) var(--ease-smooth-out),
+    height var(--duration-slow) var(--ease-smooth-out),
+    opacity var(--duration-fast) var(--ease-smooth-out);
+}
+
+.step-highlight[data-shown="true"] {
+  opacity: 1;
+}
+
+/*
+ * A run card opens like the accordion above, but its rules reach only its
+ * own panel and chevron: the step rows inside are accordions too.
+ */
+.run-acc > .run-acc-panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--acc-collapse) var(--acc-ease);
+}
+.run-acc[data-open="true"] > .run-acc-panel {
+  grid-template-rows: 1fr;
+  transition-duration: var(--acc-expand);
+}
+.run-acc > .run-acc-panel > .run-acc-inner {
+  overflow: hidden;
+  /* Room for the step capsules' outline and shadow, which would otherwise
+     be clipped at the edges. The margin gives it back, so nothing moves;
+     closed, the inner is transparent, so the extra 8px never shows. */
+  margin: 0 -8px -8px;
+  padding: 0 8px 8px;
+  opacity: 0;
+  filter: blur(var(--blur-small));
+  transition:
+    opacity var(--acc-collapse) var(--acc-ease),
+    filter var(--acc-collapse) var(--acc-ease);
+}
+.run-acc[data-open="true"] > .run-acc-panel > .run-acc-inner {
+  opacity: 1;
+  filter: blur(0);
+  transition-duration: var(--acc-expand);
+}
+.run-acc-chevron {
+  display: inline-flex;
+  transition: transform var(--acc-chevron) var(--acc-ease);
+}
+.run-acc[data-open="true"] > div > button .run-acc-chevron {
+  transform: scaleY(-1);
+}
+
+.step-spin {
+  animation: step-spin 1s linear infinite;
+}
+
+@keyframes step-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.progress-arc {
+  transition: stroke-dashoffset var(--duration-slow) var(--ease-smooth-out);
+}
+
+.pipeline-runs[data-live] .step-done {
+  transition:
+    transform var(--duration-very-slow) var(--ease-bounce),
+    opacity var(--duration-fast) var(--ease-smooth-out),
+    filter var(--duration-fast) var(--ease-smooth-out);
+
+  @starting-style {
+    transform: scale(0.4);
+    opacity: 0;
+    filter: blur(var(--blur-small));
+  }
+}
+
+/* A message opened from a pipeline step glows once. */
+[data-flash] {
+  border-radius: 20px;
+  animation: flash 1.6s var(--ease-smooth-out);
+}
+
+/* The spread paints past the edges without moving the layout. */
+@keyframes flash {
+  0%,
+  30% {
+    background: var(--fill-hover);
+    box-shadow: 0 0 0 10px var(--fill-hover);
+  }
+  100% {
+    background: transparent;
+    box-shadow: 0 0 0 10px transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .step-highlight,
+  .progress-arc,
+  .run-acc-panel,
+  .run-acc-inner,
+  .run-acc-chevron,
+  .pipeline-runs[data-live] .step-done {
+    transition: none !important;
+  }
+
+  .step-spin,
+  [data-flash] {
+    animation: none !important;
+  }
+}
+
+/*
  * Split views (sidebar | main, thread | panel), built on
  * react-resizable-panels. Opening and closing resize the panel; while that
  * happens the group carries data-animating so flex-grow eases, and the
@@ -303,6 +442,52 @@
   filter: blur(0);
   transform: translateX(0);
   transition-duration: var(--panel-open-dur);
+}
+
+/*
+ * Sidebar views (bots | pipelines) side by side on a track that slides.
+ * A finger drags it via --drag (set from script, with data-dragging so it
+ * follows without easing); letting go eases it to the chosen view. The view
+ * off to the side dims, so the one coming in reads as arriving.
+ */
+:root {
+  --sidebar-slide-dur: var(--duration-medium);
+  --sidebar-slide-ease: var(--ease-smooth-out);
+}
+
+.sidebar-views {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+  /* Sideways swipes switch views, never browser history. */
+  overscroll-behavior-x: contain;
+}
+
+.sidebar-track {
+  display: flex;
+  width: 100%;
+  transform: translateX(calc(var(--view, 0) * -100% + var(--drag, 0px)));
+  transition: transform var(--sidebar-slide-dur) var(--sidebar-slide-ease);
+  will-change: transform;
+}
+
+.sidebar-track[data-dragging] {
+  transition: none;
+}
+
+.sidebar-view {
+  display: flex;
+  min-width: 0;
+  flex: 0 0 100%;
+  flex-direction: column;
+  /* Vertical scrolling stays native; sideways goes to the swipe. */
+  touch-action: pan-y;
+  transition: opacity var(--sidebar-slide-dur) var(--sidebar-slide-ease);
+}
+
+.sidebar-view[inert] {
+  opacity: 0.4;
 }
 
 /*
@@ -754,6 +939,8 @@
 @media (prefers-reduced-motion: reduce) {
   .split-view > [data-panel],
   .split-content,
+  .sidebar-track,
+  .sidebar-view,
   .resize-grip,
   .composer,
   .composer-card,

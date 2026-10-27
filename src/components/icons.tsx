@@ -10,6 +10,7 @@ import {
   ArrowUp02Icon as ArrowUp,
   Attachment01Icon as Attachment,
   BookOpen01Icon as BookOpen,
+  BotIcon as Bot,
   Cancel01Icon as Cancel,
   Clock01Icon as Clock,
   ComputerTerminal01Icon as Terminal,
@@ -90,6 +91,7 @@ export const BellRingingIcon = icon(NotificationRinging, "BellRingingIcon")
 export const BellSlashIcon = icon(NotificationOff, "BellSlashIcon")
 export const BrainIcon = icon(Brain, "BrainIcon")
 export const CalendarIcon = icon(Calendar, "CalendarIcon")
+export const BotIcon = icon(Bot, "BotIcon")
 export const BookOpenTextIcon = icon(BookOpen, "BookOpenTextIcon")
 export const CaretDownIcon = icon(ChevronDown, "CaretDownIcon")
 export const CaretRightIcon = icon(ChevronRight, "CaretRightIcon")

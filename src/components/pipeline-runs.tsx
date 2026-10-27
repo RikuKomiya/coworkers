@@ -1,76 +1,185 @@
-import { useState } from "react"
-import { Badge } from "@cloudflare/kumo/components/badge"
+import { useEffect, useLayoutEffect, useRef, useState } from "react"
+import { Link } from "@tanstack/react-router"
 import { Button } from "@cloudflare/kumo/components/button"
-import { Loader } from "@cloudflare/kumo/components/loader"
+import { Popover } from "@cloudflare/kumo/components/popover"
 import { BotAvatar } from "@/components/bot-avatar"
-import { CheckIcon, FileIcon, WarningIcon, XIcon } from "@/components/icons"
+import { EmptyState } from "@/components/empty-state"
+import {
+  CaretDownIcon,
+  CheckIcon,
+  FileIcon,
+  MessageIcon,
+  PipelineIcon,
+  PlayIcon,
+  WarningIcon,
+  XIcon,
+} from "@/components/icons"
+import { ShimmerText } from "@/components/shimmer-text"
 import { Prose } from "@/components/thread"
 import { useHub } from "@/lib/hub-context"
-import type { PipelineRun, PipelineRunStep } from "@/lib/types"
+import {
+  currentStep,
+  formatSpan,
+  stepSpan,
+  summarize,
+} from "@/lib/pipeline-summary"
+import type {
+  BotSummary,
+  Pipeline,
+  PipelineRun,
+  PipelineRunStep,
+} from "@/lib/types"
 
-/** Outputs longer than this start folded. */
+/** Outputs longer than this start folded, even when the step is open. */
 const FOLD_CHARS = 600
 
-function RunBadge({ status }: { status: PipelineRun["status"] }) {
-  switch (status) {
-    case "running":
-      return (
-        <Badge variant="neutral" icon={<Loader size="sm" />}>
-          Running
-        </Badge>
-      )
-    case "waiting":
-      return <Badge variant="orange">Needs your OK</Badge>
-    case "done":
-      return <Badge variant="green">Done</Badge>
-    case "failed":
-      return <Badge variant="red">Failed</Badge>
-    case "stopped":
-      return <Badge variant="neutral">Stopped</Badge>
-  }
+/** Re-renders every second while `on`, for live timers. */
+function useNow(on: boolean) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!on) return
+    setNow(Date.now())
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [on])
+  return now
 }
 
-function StepMarker({ status }: { status: PipelineRunStep["status"] }) {
-  const base =
-    "flex size-6 shrink-0 items-center justify-center rounded-full text-xs"
+/** 0:42, 12:05: a running step's clock. */
+function clock(ms: number) {
+  const s = Math.max(0, Math.floor(ms / 1000))
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`
+}
+
+function when(at: number) {
+  return new Date(at).toLocaleString([], {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    hour: "numeric",
+    minute: "2-digit",
+  })
+}
+
+function stepBot(run: PipelineRun, index: number, bots: BotSummary[]) {
+  const plan = run.plan[index]
+  return plan?.kind === "bot"
+    ? bots.find((b) => b.id === plan.botId)
+    : undefined
+}
+
+function stepLabel(run: PipelineRun, index: number, bot?: BotSummary) {
+  return run.plan[index]?.kind === "approval"
+    ? "Your approval"
+    : (run.steps[index]?.botName ?? bot?.name ?? "Deleted bot")
+}
+
+/** A ring that fills as steps finish. */
+function ProgressRing({ done, total }: { done: number; total: number }) {
+  const r = 8
+  const c = 2 * Math.PI * r
+  // A sliver at the start, so a fresh run still shows where the ring begins.
+  const share = Math.max(done / total, 0.06)
+  return (
+    <svg
+      width={20}
+      height={20}
+      viewBox="0 0 20 20"
+      aria-hidden
+      className="-rotate-90 text-kumo-default"
+    >
+      <circle
+        cx={10}
+        cy={10}
+        r={r}
+        fill="none"
+        strokeWidth={2}
+        className="stroke-kumo-line"
+      />
+      <circle
+        cx={10}
+        cy={10}
+        r={r}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={2}
+        strokeLinecap="round"
+        strokeDasharray={c}
+        strokeDashoffset={c * (1 - share)}
+        className="progress-arc"
+      />
+    </svg>
+  )
+}
+
+const MARKER =
+  "flex size-6 shrink-0 items-center justify-center rounded-full text-xs tabular-nums"
+
+/** A step's status in a 24px circle. */
+function StepMarker({
+  status,
+  index,
+}: {
+  status: PipelineRunStep["status"]
+  index: number
+}) {
   switch (status) {
     case "running":
       return (
-        <span className={`${base} bg-(--fill-hover)`}>
-          <Loader size="sm" />
+        <span className={`${MARKER} relative font-medium text-kumo-default`}>
+          <svg
+            viewBox="0 0 24 24"
+            aria-hidden
+            className="step-spin absolute inset-0 size-6"
+          >
+            <circle
+              cx={12}
+              cy={12}
+              r={10.5}
+              fill="none"
+              strokeWidth={1.5}
+              className="stroke-kumo-line"
+            />
+            <path
+              d="M12 1.5a10.5 10.5 0 0 1 10.5 10.5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={1.5}
+              strokeLinecap="round"
+            />
+          </svg>
+          {index + 1}
         </span>
       )
     case "done":
       return (
-        <span className={`${base} bg-kumo-success-tint text-kumo-success`}>
+        <span className={`${MARKER} step-done bg-kumo-success text-white`}>
           <CheckIcon size={14} />
         </span>
       )
     case "failed":
       return (
-        <span className={`${base} bg-kumo-danger-tint text-kumo-danger`}>
+        <span className={`${MARKER} step-done bg-kumo-danger text-white`}>
           <XIcon size={14} />
         </span>
       )
     case "waiting":
       return (
-        <span className={`${base} bg-kumo-warning-tint text-kumo-warning`}>
+        <span className={`${MARKER} step-done bg-kumo-warning text-white`}>
           <WarningIcon size={14} />
         </span>
       )
     default:
       return (
         <span
-          className={`${base} outline outline-1 -outline-offset-1 outline-kumo-line`}
-        />
+          className={`${MARKER} border border-dashed border-kumo-line text-kumo-subtle ${
+            status === "skipped" ? "opacity-50" : ""
+          }`}
+        >
+          {index + 1}
+        </span>
       )
   }
-}
-
-function duration(step: PipelineRunStep) {
-  if (!step.startedAt || !step.finishedAt) return null
-  const s = Math.round((step.finishedAt - step.startedAt) / 1000)
-  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`
 }
 
 /** A step's result: folded when long, with the full text a click away. */
@@ -120,11 +229,306 @@ function StepOutput({
   )
 }
 
-function RunCard({ run }: { run: PipelineRun }) {
-  const hub = useHub()
-  const [busy, setBusy] = useState(false)
-  const active = run.status === "running" || run.status === "waiting"
+function FileChips({ names }: { names: string[] }) {
+  return (
+    <p className="flex flex-wrap gap-1.5">
+      {names.map((name) => (
+        <span
+          key={name}
+          className="inline-flex items-center gap-1 rounded-full bg-(--fill-hover) px-2 py-0.5 text-xs text-kumo-subtle"
+        >
+          <FileIcon size={12} />
+          {name}
+        </span>
+      ))}
+    </p>
+  )
+}
 
+/** One step: a single line that opens to its output, files and chat. */
+function StepRow({
+  run,
+  index,
+  open,
+  onToggle,
+  now,
+}: {
+  run: PipelineRun
+  index: number
+  open: boolean
+  onToggle: () => void
+  now: number
+}) {
+  const { state } = useHub()
+  const step = run.steps[index]
+  const plan = run.plan[index]
+  const bot = stepBot(run, index, state.bots)
+  const span = stepSpan(step, now)
+  const settled = step.status !== "pending" && step.status !== "skipped"
+
+  let summary: React.ReactNode = null
+  if (step.status === "running") {
+    summary = <ShimmerText text="Working…" className="truncate" />
+  } else if (step.status === "waiting") {
+    summary = (
+      <span className="truncate text-kumo-warning">Waiting for you</span>
+    )
+  } else if (step.status === "skipped") {
+    summary = <span className="truncate">Skipped</span>
+  } else if (step.status === "failed" && step.error) {
+    summary = <span className="truncate text-kumo-danger">{step.error}</span>
+  } else if (step.output) {
+    summary = <span className="truncate">{summarize(step.output)}</span>
+  } else if (plan?.kind === "approval" && step.status === "done") {
+    summary = <span className="truncate">Approved</span>
+  }
+
+  const chat =
+    bot && plan?.kind === "bot" && settled ? (
+      <Link
+        to="/bots/$botId"
+        params={{ botId: bot.id }}
+        hash={`task-${run.id}:${index}`}
+        className="inline-flex items-center gap-1.5 px-1 text-xs text-kumo-subtle hover:text-kumo-default"
+      >
+        <MessageIcon size={13} />
+        Open in chat
+      </Link>
+    ) : null
+  const note = plan?.kind === "approval" && plan.note ? plan.note : null
+  const expandable = Boolean(
+    step.output || step.files?.length || step.error || note || chat
+  )
+
+  const head = (
+    <>
+      <StepMarker status={step.status} index={index} />
+      {bot ? <BotAvatar avatar={bot.avatar} size={24} /> : null}
+      <span
+        className={`shrink-0 text-[15px] ${
+          settled ? "font-medium text-kumo-default" : "text-kumo-subtle"
+        }`}
+      >
+        {stepLabel(run, index, bot)}
+      </span>
+      <span
+        className={`min-w-0 flex-1 truncate text-sm text-kumo-subtle transition-opacity duration-(--duration-quick) ${
+          open ? "opacity-0" : ""
+        }`}
+      >
+        {summary}
+      </span>
+      {span !== null && plan?.kind === "bot" ? (
+        <span className="shrink-0 text-xs text-kumo-subtle tabular-nums">
+          {step.status === "running" ? clock(span) : formatSpan(span)}
+        </span>
+      ) : null}
+    </>
+  )
+
+  return (
+    <li
+      className="t-acc step-capsule"
+      data-open={open}
+      data-current={step.status === "running" || step.status === "waiting"}
+    >
+      {expandable ? (
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={onToggle}
+          className="step-head flex min-h-13 w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-kumo-focus"
+        >
+          {head}
+          <span className="t-acc-chevron shrink-0 text-kumo-subtle">
+            <CaretDownIcon size={16} />
+          </span>
+        </button>
+      ) : (
+        <div className="step-head flex min-h-13 items-center gap-3 py-2.5 pr-10 pl-3">
+          {head}
+        </div>
+      )}
+      {expandable ? (
+        <div className="t-acc-panel">
+          <div className="t-acc-panel-inner">
+            <div className="space-y-2 pt-0.5 pr-3 pb-3 pl-12">
+              {note ? (
+                <p className="text-sm text-pretty text-kumo-default">{note}</p>
+              ) : null}
+              {step.output ? (
+                <StepOutput runId={run.id} index={index} output={step.output} />
+              ) : null}
+              {step.files?.length ? <FileChips names={step.files} /> : null}
+              {step.error ? (
+                <p
+                  className={`text-sm text-pretty ${
+                    step.status === "failed"
+                      ? "text-kumo-danger"
+                      : "text-kumo-subtle"
+                  }`}
+                >
+                  {step.error}
+                </p>
+              ) : null}
+              {chat}
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </li>
+  )
+}
+
+/**
+ * A run's steps as rows. The step being worked on sits on a highlight that
+ * slides to the next row when it finishes.
+ */
+function StepList({ run }: { run: PipelineRun }) {
+  const active = run.status === "running" || run.status === "waiting"
+  const now = useNow(active)
+  const current = currentStep(run)
+  const list = useRef<HTMLOListElement>(null)
+  const highlight = useRef<HTMLSpanElement>(null)
+  const placed = useRef(false)
+  // Failures and approvals open themselves; everything else waits for a click.
+  const [open, setOpen] = useState<Set<number>>(
+    () =>
+      new Set(
+        run.steps.flatMap((s, i) =>
+          s.status === "failed" || s.status === "waiting" ? [i] : []
+        )
+      )
+  )
+  const failed = run.steps.findIndex((s) => s.status === "failed")
+  useEffect(() => {
+    if (failed !== -1) setOpen((o) => new Set(o).add(failed))
+  }, [failed])
+
+  useLayoutEffect(() => {
+    const listEl = list.current
+    const hl = highlight.current
+    if (!listEl || !hl) return
+
+    function place(animate: boolean) {
+      const row = listEl!.querySelector<HTMLElement>('[data-current="true"]')
+      if (!row) {
+        hl!.dataset.shown = "false"
+        return
+      }
+      if (!animate) hl!.style.transition = "none"
+      hl!.style.transform = `translateY(${row.offsetTop}px)`
+      hl!.style.height = `${row.offsetHeight}px`
+      hl!.dataset.shown = "true"
+      if (!animate) {
+        void hl!.offsetHeight
+        hl!.style.transition = ""
+      }
+    }
+
+    // Snap on first paint, slide when the run moves on.
+    place(placed.current)
+    placed.current = true
+    // Rows above opening or closing move the current one: follow it.
+    const observer = new ResizeObserver(() => place(false))
+    observer.observe(listEl)
+    return () => observer.disconnect()
+  }, [current])
+
+  function toggle(i: number) {
+    setOpen((o) => {
+      const next = new Set(o)
+      if (next.has(i)) next.delete(i)
+      else next.add(i)
+      return next
+    })
+  }
+
+  return (
+    <ol ref={list} className="relative flex flex-col gap-1.5">
+      <span ref={highlight} aria-hidden className="step-highlight" />
+      {run.steps.map((_, i) => (
+        <StepRow
+          key={i}
+          run={run}
+          index={i}
+          open={open.has(i)}
+          onToggle={() => toggle(i)}
+          now={now}
+        />
+      ))}
+    </ol>
+  )
+}
+
+/** What the run as a whole is doing, in a glyph and a few words. */
+function Headline({ run }: { run: PipelineRun }) {
+  const total = run.steps.length
+  const done = run.steps.filter((s) => s.status === "done").length
+  const failedAt = run.steps.findIndex((s) => s.status === "failed")
+  const glyph = "flex size-5 shrink-0 items-center justify-center rounded-full"
+  switch (run.status) {
+    case "running":
+      return (
+        <>
+          <ProgressRing done={done} total={total} />
+          <span className="text-[15px] font-semibold text-kumo-default tabular-nums">
+            {done} of {total} done
+          </span>
+        </>
+      )
+    case "waiting":
+      return (
+        <>
+          <span className={`${glyph} bg-kumo-warning text-white`}>
+            <WarningIcon size={12} />
+          </span>
+          <span className="text-[15px] font-semibold text-kumo-default">
+            Waiting for your OK
+          </span>
+        </>
+      )
+    case "done":
+      return (
+        <>
+          <span className={`${glyph} bg-kumo-success text-white`}>
+            <CheckIcon size={12} />
+          </span>
+          <span className="text-[15px] font-semibold text-kumo-default tabular-nums">
+            Done
+            {run.finishedAt
+              ? ` in ${formatSpan(run.finishedAt - run.startedAt)}`
+              : ""}
+          </span>
+        </>
+      )
+    case "failed":
+      return (
+        <>
+          <span className={`${glyph} bg-kumo-danger text-white`}>
+            <XIcon size={12} />
+          </span>
+          <span className="text-[15px] font-semibold text-kumo-default">
+            {failedAt === -1 ? "Failed" : `Failed at step ${failedAt + 1}`}
+          </span>
+        </>
+      )
+    case "stopped":
+      return (
+        <>
+          <span className={`${glyph} border border-kumo-line text-kumo-subtle`}>
+            <XIcon size={12} />
+          </span>
+          <span className="text-[15px] font-semibold text-kumo-default">
+            Stopped
+          </span>
+        </>
+      )
+  }
+}
+
+function useAct() {
+  const [busy, setBusy] = useState(false)
   async function act(fn: () => Promise<void>) {
     setBusy(true)
     try {
@@ -133,27 +537,77 @@ function RunCard({ run }: { run: PipelineRun }) {
       setBusy(false)
     }
   }
+  return { busy, act }
+}
+
+const DOT: Record<PipelineRunStep["status"], string> = {
+  pending: "border border-kumo-line",
+  running: "bg-kumo-contrast",
+  waiting: "bg-kumo-warning",
+  done: "bg-kumo-success",
+  failed: "bg-kumo-danger",
+  skipped: "border border-dashed border-kumo-line",
+}
+
+/**
+ * One run. The header opens and closes it; closed, it is one line with a
+ * dot per step.
+ */
+function RunCard({
+  run,
+  defaultOpen,
+}: {
+  run: PipelineRun
+  defaultOpen: boolean
+}) {
+  const hub = useHub()
+  const { busy, act } = useAct()
+  const active = run.status === "running" || run.status === "waiting"
+  const [open, setOpen] = useState(defaultOpen)
+  // Steps mount on first open (thirty runs of them add up) and stay for
+  // the close animation.
+  const [seen, setSeen] = useState(defaultOpen)
 
   return (
-    <li className="space-y-3 rounded-2xl bg-kumo-base p-4 outline outline-1 -outline-offset-1 outline-black/[0.06]">
-      <div className="flex items-center gap-2">
-        <RunBadge status={run.status} />
-        <span className="min-w-0 flex-1 truncate text-sm text-kumo-subtle tabular-nums">
-          {new Date(run.startedAt).toLocaleString([], {
-            weekday: "short",
-            day: "numeric",
-            month: "short",
-            hour: "numeric",
-            minute: "2-digit",
-          })}
-          {" · "}
-          {run.trigger === "schedule" ? "Scheduled" : "Run by you"}
-        </span>
+    <li className="run-acc rounded-3xl bg-(--fill-hover) p-2" data-open={open}>
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => {
+            setSeen(true)
+            setOpen((o) => !o)
+          }}
+          className="flex min-h-10 min-w-0 flex-1 items-center gap-2.5 rounded-2xl pr-2 pl-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-kumo-focus"
+        >
+          <Headline run={run} />
+          <span className="min-w-0 flex-1" />
+          <span
+            aria-hidden
+            className={`flex shrink-0 items-center gap-1 transition-opacity duration-(--duration-quick) ${
+              open ? "opacity-0" : ""
+            }`}
+          >
+            {run.steps.map((s, i) => (
+              <span
+                key={i}
+                className={`size-2 rounded-full ${DOT[s.status]}`}
+              />
+            ))}
+          </span>
+          <span className="shrink truncate text-[13px] text-kumo-subtle tabular-nums">
+            {when(run.startedAt)} ·{" "}
+            {run.trigger === "schedule" ? "Scheduled" : "By you"}
+          </span>
+          <span className="run-acc-chevron shrink-0 text-kumo-subtle">
+            <CaretDownIcon size={16} />
+          </span>
+        </button>
         {active ? (
           <Button
             size="sm"
             variant="ghost"
-            className="rounded-full"
+            className="shrink-0 rounded-full"
             disabled={busy || !hub.pipelines}
             onClick={() => void act(() => hub.pipelines!.stop(run.id))}
           >
@@ -161,131 +615,235 @@ function RunCard({ run }: { run: PipelineRun }) {
           </Button>
         ) : null}
       </div>
-      {run.input ? (
-        <p className="line-clamp-2 px-0.5 text-sm text-pretty text-kumo-subtle">
-          Input: {run.input}
-        </p>
-      ) : null}
-      <ol className="space-y-3">
-        {run.steps.map((step, i) => {
-          const plan = run.plan[i]
-          const bot =
-            plan?.kind === "bot"
-              ? hub.state.bots.find((b) => b.id === plan.botId)
-              : undefined
-          const label =
-            plan?.kind === "approval"
-              ? "Your approval"
-              : (step.botName ?? bot?.name ?? "Deleted bot")
-          const took = duration(step)
-          return (
-            <li key={i} className="flex gap-3">
-              <StepMarker status={step.status} />
-              <div className="min-w-0 flex-1 space-y-2">
-                <p className="flex min-h-6 items-center gap-2 text-sm">
-                  {bot ? <BotAvatar avatar={bot.avatar} size={18} /> : null}
-                  <span
-                    className={
-                      step.status === "pending" || step.status === "skipped"
-                        ? "text-kumo-subtle"
-                        : "font-medium text-kumo-default"
-                    }
-                  >
-                    {label}
-                  </span>
-                  {step.status === "skipped" ? (
-                    <span className="text-xs text-kumo-subtle">skipped</span>
-                  ) : null}
-                  {took ? (
-                    <span className="text-xs text-kumo-subtle tabular-nums">
-                      {took}
-                    </span>
-                  ) : null}
+      <div className="run-acc-panel">
+        <div className="run-acc-inner">
+          {seen ? (
+            <div className="space-y-2 pt-2">
+              {run.input ? (
+                <p className="line-clamp-2 px-3 text-sm text-pretty text-kumo-subtle">
+                  Started from: {run.input}
                 </p>
-                {step.status === "waiting" && plan?.kind === "approval" ? (
-                  <div className="space-y-2">
-                    {plan.note ? (
-                      <p className="text-sm text-pretty text-kumo-default">
-                        {plan.note}
-                      </p>
-                    ) : null}
-                    <div className="flex gap-2">
-                      <Button
-                        size="sm"
-                        variant="primary"
-                        className="btn-ink rounded-full"
-                        disabled={busy || !hub.pipelines}
-                        onClick={() =>
-                          void act(() => hub.pipelines!.answer(run.id, true))
-                        }
-                      >
-                        Approve
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="rounded-full"
-                        disabled={busy || !hub.pipelines}
-                        onClick={() =>
-                          void act(() => hub.pipelines!.answer(run.id, false))
-                        }
-                      >
-                        Turn down
-                      </Button>
-                    </div>
-                  </div>
-                ) : null}
-                {step.output ? (
-                  <StepOutput runId={run.id} index={i} output={step.output} />
-                ) : null}
-                {step.files?.length ? (
-                  <p className="flex flex-wrap gap-1.5">
-                    {step.files.map((name) => (
-                      <span
-                        key={name}
-                        className="inline-flex items-center gap-1 rounded-full bg-(--fill-hover) px-2 py-0.5 text-xs text-kumo-subtle"
-                      >
-                        <FileIcon size={12} />
-                        {name}
-                      </span>
-                    ))}
-                  </p>
-                ) : null}
-                {step.error ? (
-                  <p
-                    className={`text-sm text-pretty ${
-                      step.status === "failed"
-                        ? "text-kumo-danger"
-                        : "text-kumo-subtle"
-                    }`}
-                  >
-                    {step.error}
-                  </p>
-                ) : null}
-              </div>
-            </li>
-          )
-        })}
-      </ol>
+              ) : null}
+              <StepList run={run} />
+            </div>
+          ) : null}
+        </div>
+      </div>
     </li>
   )
 }
 
-/** Recent runs of one pipeline, live from the hub. */
-export function PipelineRuns({ pipelineId }: { pipelineId: string }) {
+/**
+ * A run stopped for the user's OK: what the previous step produced, and the
+ * buttons, above everything else.
+ */
+function ApprovalCallout({ run }: { run: PipelineRun }) {
+  const hub = useHub()
+  const { busy, act } = useAct()
+  const index = run.steps.findIndex((s) => s.status === "waiting")
+  const plan = run.plan[index]
+  if (index === -1 || plan?.kind !== "approval") return null
+  const prev = index - 1
+  const prevStep = run.steps[prev]
+  const prevBot = stepBot(run, prev, hub.state.bots)
+
+  return (
+    <section className="space-y-3 rounded-2xl bg-kumo-warning-tint/60 p-4 outline outline-1 -outline-offset-1 outline-kumo-warning/25">
+      <div className="flex items-center gap-2.5">
+        <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-kumo-warning-tint text-kumo-warning">
+          <WarningIcon size={12} />
+        </span>
+        <h3 className="min-w-0 flex-1 truncate text-sm font-medium text-kumo-default">
+          Step {index + 1} needs your OK
+        </h3>
+      </div>
+      {plan.note ? (
+        <p className="text-sm text-pretty text-kumo-default">{plan.note}</p>
+      ) : null}
+      {prevStep?.output ? (
+        <div className="space-y-2">
+          <p className="flex items-center gap-1.5 text-xs text-kumo-subtle">
+            {prevBot ? <BotAvatar avatar={prevBot.avatar} size={16} /> : null}
+            From {stepLabel(run, prev, prevBot)}
+          </p>
+          <StepOutput runId={run.id} index={prev} output={prevStep.output} />
+          {prevStep.files?.length ? <FileChips names={prevStep.files} /> : null}
+        </div>
+      ) : null}
+      <div className="flex gap-2">
+        <Button
+          size="sm"
+          variant="primary"
+          className="btn-ink rounded-full"
+          disabled={busy || !hub.pipelines}
+          onClick={() => void act(() => hub.pipelines!.answer(run.id, true))}
+        >
+          Approve
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="rounded-full"
+          disabled={busy || !hub.pipelines}
+          onClick={() => void act(() => hub.pipelines!.answer(run.id, false))}
+        >
+          Turn down
+        </Button>
+      </div>
+    </section>
+  )
+}
+
+/**
+ * Run, in the page header. It opens a small form for an optional input to
+ * the first step, so the common case is two clicks and the rare one is
+ * still close.
+ */
+export function RunButton({
+  pipeline,
+  blocked,
+}: {
+  pipeline: Pipeline
+  /** Why it cannot run right now, e.g. unsaved setup. */
+  blocked?: string
+}) {
+  const hub = useHub()
+  const [open, setOpen] = useState(false)
+  const [input, setInput] = useState("")
+  const [running, setRunning] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function run() {
+    if (!hub.pipelines || blocked || running) return
+    setRunning(true)
+    setError(null)
+    try {
+      await hub.pipelines.run(pipeline.id, input)
+      setInput("")
+      setOpen(false)
+    } catch (err) {
+      setError(
+        (err instanceof Error ? err.message : String(err)).replace(
+          /^Error: /,
+          ""
+        )
+      )
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  const hint = error ?? blocked
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <Popover.Trigger
+        render={
+          <Button
+            size="sm"
+            variant="primary"
+            className="btn-ink rounded-full"
+            icon={<PlayIcon />}
+            disabled={!hub.pipelines}
+          >
+            Run
+          </Button>
+        }
+      />
+      <Popover.Content
+        side="bottom"
+        align="end"
+        sideOffset={8}
+        className="w-[340px] max-w-[calc(100vw-32px)] p-3"
+      >
+        <Popover.Title className="text-[15px] font-semibold text-kumo-default">
+          Run {pipeline.name}
+        </Popover.Title>
+        <textarea
+          aria-label="Input for the first step"
+          value={input}
+          autoFocus
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+              e.preventDefault()
+              void run()
+            }
+          }}
+          placeholder="Anything the first step should start from"
+          className={`mt-3 mb-3 block field-sizing-content max-h-48 min-h-20 w-full resize-none rounded-xl bg-(--fill-hover) px-3 py-2 text-sm leading-5 text-kumo-default outline-none placeholder:text-kumo-placeholder`}
+        />
+        <div className="flex items-center gap-3">
+          <p
+            className={`min-w-0 flex-1 text-xs text-pretty ${
+              error ? "text-kumo-danger" : "text-kumo-subtle"
+            }`}
+          >
+            {hint ?? "Optional. ⌘↵ to run."}
+          </p>
+          <Button
+            size="sm"
+            variant="primary"
+            className="btn-ink shrink-0 rounded-full"
+            icon={<PlayIcon />}
+            loading={running}
+            disabled={Boolean(blocked) || !hub.pipelines}
+            onClick={() => void run()}
+          >
+            Run
+          </Button>
+        </div>
+      </Popover.Content>
+    </Popover>
+  )
+}
+
+/**
+ * The runs side of a pipeline: answer what is waiting, then every run,
+ * newest first and open, older ones folded. Live from the hub.
+ */
+export function PipelineRuns({ pipeline }: { pipeline: Pipeline }) {
   const { state } = useHub()
   const runs = (state.pipelineRuns ?? []).filter(
-    (r) => r.pipelineId === pipelineId
+    (r) => r.pipelineId === pipeline.id
   )
-  if (runs.length === 0) return null
+  const waiting = runs.filter((r) => r.status === "waiting")
+
+  // Steps that finish after this mounts get the check pop; history does not.
+  const root = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    root.current?.setAttribute("data-live", "")
+  }, [])
+
   return (
-    <section className="space-y-2">
-      <h3 className="px-1.5 text-sm font-medium text-kumo-default">Runs</h3>
-      <ul className="space-y-3">
-        {runs.map((run) => (
-          <RunCard key={run.id} run={run} />
-        ))}
-      </ul>
-    </section>
+    <div ref={root} className="pipeline-runs space-y-6">
+      {waiting.map((run) => (
+        <ApprovalCallout key={run.id} run={run} />
+      ))}
+      {runs.length ? (
+        <ul className="space-y-3">
+          {runs.map((run, i) => (
+            <RunCard
+              key={run.id}
+              run={run}
+              // The newest and anything still going start open.
+              defaultOpen={
+                i === 0 || run.status === "running" || run.status === "waiting"
+              }
+            />
+          ))}
+        </ul>
+      ) : (
+        <EmptyState
+          className="pt-12"
+          icon={<PipelineIcon size={24} />}
+          title="No runs yet"
+          description={
+            pipeline.cron
+              ? "It runs on its schedule, or press Run to start one now."
+              : "Press Run at the top to start one. Each step's result shows up here as it lands."
+          }
+        />
+      )}
+    </div>
   )
 }

@@ -1,7 +1,8 @@
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import {
   Link,
   useHydrated,
+  useLocation,
   useNavigate,
   useParams,
 } from "@tanstack/react-router"
@@ -12,6 +13,7 @@ import {
   BellIcon,
   BellRingingIcon,
   BellSlashIcon,
+  BotIcon,
   GearSixIcon,
   MagnifyingGlassIcon,
   PipelineIcon,
@@ -19,10 +21,19 @@ import {
 } from "@/components/icons"
 import { ApprovalPopover } from "@/components/approval-popover"
 import { BotAvatar } from "@/components/bot-avatar"
+import { EmptyState } from "@/components/empty-state"
 import { ShimmerText } from "@/components/shimmer-text"
 import { useHub } from "@/lib/hub-context"
 import { usePushNotifications } from "@/lib/push"
-import type { BotSummary } from "@/lib/types"
+import { useSwipeViews } from "@/lib/use-swipe-views"
+import type { BotSummary, Pipeline, PipelineRun } from "@/lib/types"
+
+/** The sidebar's views, left to right. Swiping moves between them. */
+const VIEWS = ["bots", "pipelines"] as const
+type View = (typeof VIEWS)[number]
+
+const ROW =
+  "pressable flex items-center gap-3 rounded-xl px-2.5 py-2 outline-none focus-visible:ring-2 focus-visible:ring-kumo-focus"
 
 const FOOTER_BUTTON = "icon-btn"
 
@@ -120,7 +131,7 @@ function BotRow({ bot, active }: { bot: BotSummary; active: boolean }) {
     <Link
       to="/bots/$botId"
       params={{ botId: bot.id }}
-      className={`pressable flex items-center gap-3 rounded-xl px-2.5 py-2 outline-none focus-visible:ring-2 focus-visible:ring-kumo-focus ${
+      className={`${ROW} ${
         active ? "bg-(--fill-active)" : "hover:bg-(--fill-hover)"
       }`}
     >
@@ -169,7 +180,36 @@ function BotRow({ bot, active }: { bot: BotSummary; active: boolean }) {
   )
 }
 
-export function Sidebar() {
+/** A search pill with a round action button tucked in at the end. */
+function SearchPill({
+  value,
+  onChange,
+  label,
+  children,
+}: {
+  value: string
+  onChange: (value: string) => void
+  label: string
+  children: React.ReactNode
+}) {
+  return (
+    // The 28px button sits 4px inside the 36px pill.
+    <div className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-full bg-(--fill-hover) pr-1 pl-3 text-kumo-subtle focus-within:ring-2 focus-within:ring-kumo-focus">
+      <MagnifyingGlassIcon size={16} className="shrink-0" />
+      <input
+        type="search"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Search"
+        aria-label={label}
+        className="min-w-0 flex-1 bg-transparent text-sm text-kumo-default outline-none placeholder:text-kumo-placeholder"
+      />
+      {children}
+    </div>
+  )
+}
+
+function BotsView() {
   const hub = useHub()
   const navigate = useNavigate()
   const { botId } = useParams({ strict: false })
@@ -197,19 +237,9 @@ export function Sidebar() {
   }
 
   return (
-    <aside className="flex h-full w-full flex-col">
+    <>
       <div className="col-header">
-        {/* The 28px button sits 4px inside the 36px pill. */}
-        <div className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-full bg-(--fill-hover) pr-1 pl-3 text-kumo-subtle focus-within:ring-2 focus-within:ring-kumo-focus">
-          <MagnifyingGlassIcon size={16} className="shrink-0" />
-          <input
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search"
-            aria-label="Search bots"
-            className="min-w-0 flex-1 bg-transparent text-sm text-kumo-default outline-none placeholder:text-kumo-placeholder"
-          />
+        <SearchPill value={query} onChange={setQuery} label="Search bots">
           <Tooltip
             content="New bot"
             render={
@@ -224,7 +254,7 @@ export function Sidebar() {
               </button>
             }
           />
-        </div>
+        </SearchPill>
       </div>
 
       <nav
@@ -240,6 +270,242 @@ export function Sidebar() {
           </p>
         ) : null}
       </nav>
+    </>
+  )
+}
+
+/** One face for a lone bot, two overlapping for a chain. */
+function PipelineFaces({
+  bots,
+  workingId,
+}: {
+  bots: BotSummary[]
+  workingId?: string
+}) {
+  const status = (b: BotSummary) => (b.id === workingId ? "working" : "idle")
+  if (bots.length === 0) {
+    return (
+      <span className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-(--fill-hover) text-kumo-subtle">
+        <PipelineIcon size={22} />
+      </span>
+    )
+  }
+  if (bots.length === 1) {
+    return (
+      <BotAvatar avatar={bots[0].avatar} status={status(bots[0])} size={48} />
+    )
+  }
+  return (
+    <span className="relative size-12 shrink-0">
+      <span className="absolute top-0 left-0">
+        <BotAvatar avatar={bots[0].avatar} status={status(bots[0])} size={32} />
+      </span>
+      <span className="absolute right-0 bottom-0">
+        <BotAvatar avatar={bots[1].avatar} status={status(bots[1])} size={32} />
+      </span>
+    </span>
+  )
+}
+
+function PipelineRow({
+  pipeline,
+  run,
+  active,
+}: {
+  pipeline: Pipeline
+  run?: PipelineRun
+  active: boolean
+}) {
+  const hydrated = useHydrated()
+  const { state } = useHub()
+  const botFor = (id: string) => state.bots.find((b) => b.id === id)
+  const bots = [
+    ...new Set(
+      pipeline.steps.flatMap((s) => (s.kind === "bot" ? s.botId : []))
+    ),
+  ].flatMap((id) => botFor(id) ?? [])
+  const chain = pipeline.steps
+    .map((s) =>
+      s.kind === "approval" ? "You" : (botFor(s.botId)?.name ?? "Deleted bot")
+    )
+    .join(" → ")
+
+  const runningIndex =
+    run?.status === "running"
+      ? run.steps.findIndex((s) => s.status === "running")
+      : -1
+  const runningStep = runningIndex === -1 ? undefined : run?.plan[runningIndex]
+  const workingId = runningStep?.kind === "bot" ? runningStep.botId : undefined
+  const workingName = run?.steps[runningIndex]?.botName
+
+  let subtitle: React.ReactNode
+  if (run?.status === "running") {
+    subtitle = (
+      <ShimmerText
+        text={workingName ? `${workingName} is working…` : "Running…"}
+        className="block truncate text-sm"
+      />
+    )
+  } else if (run?.status === "waiting") {
+    subtitle = (
+      <span className="block truncate text-sm text-kumo-warning">
+        Needs your OK to continue
+      </span>
+    )
+  } else if (run?.status === "failed") {
+    subtitle = (
+      <span className="block truncate text-sm text-kumo-danger">
+        Last run failed
+      </span>
+    )
+  } else {
+    subtitle = (
+      <span className="block truncate text-sm text-kumo-subtle">
+        {chain}
+        {pipeline.cron ? " · Scheduled" : ""}
+      </span>
+    )
+  }
+
+  return (
+    <Link
+      to="/pipelines/$pipelineId"
+      params={{ pipelineId: pipeline.id }}
+      className={`${ROW} ${
+        active ? "bg-(--fill-active)" : "hover:bg-(--fill-hover)"
+      }`}
+    >
+      <PipelineFaces bots={bots} workingId={workingId} />
+      <span className="min-w-0 flex-1">
+        <span className="flex items-baseline justify-between gap-2">
+          <span className="truncate text-[15px] font-medium text-kumo-default">
+            {pipeline.name}
+          </span>
+          <span className="shrink-0 text-xs text-kumo-subtle tabular-nums">
+            {hydrated && run ? formatWhen(run.startedAt) : null}
+          </span>
+        </span>
+        {subtitle}
+      </span>
+    </Link>
+  )
+}
+
+function PipelinesView() {
+  const { state } = useHub()
+  const { pipelineId } = useParams({ strict: false })
+  const [query, setQuery] = useState("")
+  const runs = state.pipelineRuns ?? []
+
+  const pipelines = useMemo(() => {
+    const all = state.pipelines ?? []
+    const needle = query.trim().toLowerCase()
+    if (!needle) return all
+    return all.filter((p) => p.name.toLowerCase().includes(needle))
+  }, [state.pipelines, query])
+
+  return (
+    <>
+      <div className="col-header">
+        <SearchPill value={query} onChange={setQuery} label="Search pipelines">
+          <Tooltip
+            content="New pipeline"
+            render={
+              <Link
+                to="/pipelines/$pipelineId"
+                params={{ pipelineId: "new" }}
+                aria-label="New pipeline"
+                className="icon-btn size-7! hover:bg-(--fill-active)!"
+              >
+                <PlusIcon size={16} />
+              </Link>
+            }
+          />
+        </SearchPill>
+      </div>
+
+      <nav
+        aria-label="Pipelines"
+        className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-(--inset) pt-1"
+      >
+        {pipelines.map((p) => (
+          <PipelineRow
+            key={p.id}
+            pipeline={p}
+            run={runs.find((r) => r.pipelineId === p.id)}
+            active={p.id === pipelineId}
+          />
+        ))}
+        {pipelines.length === 0 && query ? (
+          <p className="px-2.5 py-6 text-sm text-kumo-subtle">
+            No pipelines match that search.
+          </p>
+        ) : null}
+        {(state.pipelines ?? []).length === 0 ? (
+          <EmptyState
+            className="pt-16"
+            icon={<PipelineIcon size={24} />}
+            title="Chain your bots together"
+            description="Each bot picks up where the last one left off, and you can sign off before anything goes out."
+            action={
+              <Link
+                to="/pipelines/$pipelineId"
+                params={{ pipelineId: "new" }}
+                className="pressable btn-ink inline-flex h-8 items-center gap-1.5 rounded-full px-3.5 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-kumo-focus"
+              >
+                <PlusIcon size={14} />
+                New pipeline
+              </Link>
+            }
+          />
+        ) : null}
+      </nav>
+    </>
+  )
+}
+
+export function Sidebar() {
+  const hub = useHub()
+  const section = useLocation({
+    select: (l) => (l.pathname.startsWith("/pipelines") ? "pipelines" : "bots"),
+  })
+  const [view, setView] = useState<View>(section)
+  // Follow the page when it moves to the other section (a link, a push
+  // notification), but leave the user's own choice alone otherwise.
+  useEffect(() => setView(section), [section])
+
+  const index = VIEWS.indexOf(view)
+  const onPipelines = view === "pipelines"
+  const swipe = useSwipeViews({
+    index,
+    count: VIEWS.length,
+    onChange: (i) => setView(VIEWS[i]),
+  })
+  const waiting = (hub.state.pipelineRuns ?? []).some(
+    (r) => r.status === "waiting"
+  )
+
+  return (
+    // The whole sidebar takes swipes, footer and gaps included.
+    <aside
+      ref={swipe.viewportRef}
+      className="flex h-full w-full touch-pan-y flex-col"
+    >
+      <div className="sidebar-views">
+        <div
+          ref={swipe.trackRef}
+          className="sidebar-track"
+          style={{ "--view": index } as React.CSSProperties}
+        >
+          {/* The view off to the side stays out of the tab order. */}
+          <div className="sidebar-view" inert={view !== "bots"}>
+            <BotsView />
+          </div>
+          <div className="sidebar-view" inert={!onPipelines}>
+            <PipelinesView />
+          </div>
+        </div>
+      </div>
 
       {/* Same row as the search bar at the top: --header-h tall, --inset
           from the edges, the avatar where the search icon sits. */}
@@ -264,12 +530,30 @@ export function Sidebar() {
         </span>
         <div className="flex items-center gap-1">
           <NotificationsButton />
+          {/* Toggles the sidebar; the icon shows where it goes next. */}
           <Tooltip
-            content="Pipelines"
+            content={onPipelines ? "Bots" : "Pipelines"}
             render={
-              <Link to="/pipelines" aria-label="Pipelines" className="icon-btn">
-                <PipelineIcon size={20} />
-              </Link>
+              <button
+                type="button"
+                aria-label={onPipelines ? "Show bots" : "Show pipelines"}
+                onClick={() => setView(onPipelines ? "bots" : "pipelines")}
+                className={`${FOOTER_BUTTON} relative`}
+              >
+                <span
+                  className="t-icon-swap"
+                  data-state={onPipelines ? "b" : "a"}
+                >
+                  <PipelineIcon size={20} className="t-icon" data-icon="a" />
+                  <BotIcon size={20} className="t-icon" data-icon="b" />
+                </span>
+                {waiting && !onPipelines ? (
+                  <span
+                    className="unread-dot absolute top-1 right-1 size-2.5 rounded-full bg-kumo-warning ring-2 ring-kumo-canvas"
+                    aria-label="A pipeline needs your OK"
+                  />
+                ) : null}
+              </button>
             }
           />
           <Tooltip

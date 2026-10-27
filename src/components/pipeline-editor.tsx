@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useNavigate } from "@tanstack/react-router"
 import { Button } from "@cloudflare/kumo/components/button"
 import { Select } from "@cloudflare/kumo/components/select"
@@ -11,13 +11,7 @@ import {
   RowAction,
   SaveBar,
 } from "@/components/group"
-import {
-  ArrowUpIcon,
-  CheckIcon,
-  PlayIcon,
-  PlusIcon,
-  TrashIcon,
-} from "@/components/icons"
+import { ArrowUpIcon, CheckIcon, PlusIcon, TrashIcon } from "@/components/icons"
 import { describeCron, nextRun, parseCron } from "@/lib/cron"
 import { useHub } from "@/lib/hub-context"
 import {
@@ -82,7 +76,7 @@ function StepCard({
             <Select
               aria-label={`Bot for step ${index + 1}`}
               size="sm"
-              className="w-48 min-w-0"
+              className="w-48 min-w-0 shrink"
               placeholder={bots.length ? "Pick a bot" : "No bots yet"}
               value={bot ? step.botId : null}
               items={botItems}
@@ -223,77 +217,16 @@ function ScheduleGroup({
   )
 }
 
-/** Start a run, with an optional input for the first step. */
-function RunNow({
-  pipeline,
-  disabled,
-}: {
-  pipeline: Pipeline
-  disabled: boolean
-}) {
-  const hub = useHub()
-  const [input, setInput] = useState("")
-  const [running, setRunning] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  async function run() {
-    if (!hub.pipelines) return
-    setRunning(true)
-    setError(null)
-    try {
-      await hub.pipelines.run(pipeline.id, input)
-      setInput("")
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setRunning(false)
-    }
-  }
-
-  return (
-    <Group
-      title="Run now"
-      hint={
-        error ??
-        (disabled
-          ? "Save your changes first."
-          : "The first step starts from this. Leave it empty if its instructions say it all.")
-      }
-    >
-      <li className="flex items-end gap-3 py-3 pr-3 pl-4">
-        <textarea
-          aria-label="Input for the first step"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Anything the first step should start from"
-          className={`${FIELD} field-sizing-content min-h-6 flex-1 resize-none leading-6`}
-        />
-        <Button
-          size="sm"
-          variant="primary"
-          className="btn-ink shrink-0 rounded-full"
-          icon={<PlayIcon />}
-          loading={running}
-          disabled={disabled || !hub.pipelines}
-          onClick={() => void run()}
-        >
-          Run
-        </Button>
-      </li>
-    </Group>
-  )
-}
-
 /**
- * Create or change a pipeline. `pipeline` is null for a new one. `children`
- * (the run history) goes between Run now and Delete.
+ * Create or change a pipeline. `pipeline` is null for a new one.
+ * `onDirtyChange` hears when there are unsaved changes, so runs can wait.
  */
 export function PipelineEditor({
   pipeline,
-  children,
+  onDirtyChange,
 }: {
   pipeline: Pipeline | null
-  children?: React.ReactNode
+  onDirtyChange?: (dirty: boolean) => void
 }) {
   const hub = useHub()
   const navigate = useNavigate()
@@ -318,6 +251,8 @@ export function PipelineEditor({
         steps: pipeline.steps,
         cron: pipeline.cron,
       })
+
+  useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange])
 
   function reset() {
     if (!pipeline) return
@@ -474,8 +409,6 @@ export function PipelineEditor({
 
       {pipeline ? (
         <>
-          <RunNow pipeline={pipeline} disabled={dirty} />
-          {children}
           <div className="flex justify-center">
             <Button
               size="sm"

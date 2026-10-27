@@ -15,7 +15,10 @@ const NEAR_BOTTOM_PX = 80
  * fixed-length tween on every token. Content size is watched with a
  * ResizeObserver, so nothing has to call it on each render.
  */
-export function useFollowBottom() {
+export function useFollowBottom(
+  /** Element id to open at instead of the bottom, e.g. a linked message. */
+  anchorId?: string
+) {
   const scroller = useRef<HTMLDivElement>(null)
   const content = useRef<HTMLDivElement>(null)
   const pinned = useRef(true)
@@ -59,6 +62,11 @@ export function useFollowBottom() {
     follow()
   }, [follow])
 
+  /** Stop following, e.g. to show an older message. */
+  const release = useCallback(() => {
+    pinned.current = false
+  }, [])
+
   const onScroll = useCallback(() => {
     const el = scroller.current
     if (!el) return
@@ -70,11 +78,23 @@ export function useFollowBottom() {
     lastTop.current = el.scrollTop
   }, [])
 
-  // History opens at the bottom, before the first paint.
+  // History opens at the bottom, before the first paint, unless a link
+  // points at a message in it. The scroller can remount while the live
+  // connection takes over, so this runs per mount, not once per link.
+  const anchor = useRef(anchorId)
+  anchor.current = anchorId
   useLayoutEffect(() => {
     const el = scroller.current
     if (!el) return
-    el.scrollTop = el.scrollHeight
+    const target = anchor.current
+      ? document.getElementById(anchor.current)
+      : null
+    if (target && el.contains(target)) {
+      pinned.current = false
+      target.scrollIntoView({ block: "start" })
+    } else {
+      el.scrollTop = el.scrollHeight
+    }
     lastTop.current = el.scrollTop
   }, [])
 
@@ -89,5 +109,5 @@ export function useFollowBottom() {
     }
   }, [follow])
 
-  return { scroller, content, onScroll, pin }
+  return { scroller, content, onScroll, pin, release }
 }

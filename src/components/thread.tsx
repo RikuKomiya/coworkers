@@ -1,5 +1,12 @@
-import { Fragment, useLayoutEffect, useMemo, useRef, useState } from "react"
-import { useHydrated } from "@tanstack/react-router"
+import {
+  Fragment,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react"
+import { useHydrated, useLocation } from "@tanstack/react-router"
 import Markdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { Button } from "@cloudflare/kumo/components/button"
@@ -615,6 +622,12 @@ function TimeDivider({ at }: { at: number }) {
   )
 }
 
+/** The anchor a delegated task's message carries, for links into the chat. */
+function taskAnchor(message: UIMessage) {
+  const task = message.role === "user" ? metaOf(message).task : undefined
+  return task ? `task-${task.id}` : undefined
+}
+
 export function Thread({
   bot,
   messages,
@@ -629,7 +642,11 @@ export function Thread({
   onAnswerChoice,
   unreadFrom,
 }: ThreadProps) {
-  const { scroller, content, onScroll, pin } = useFollowBottom()
+  // A link to one task's message (from a pipeline run) opens the thread there.
+  const hash = useLocation({ select: (l) => l.hash })
+  const anchorId = hash.startsWith("task-") ? hash : undefined
+  const { scroller, content, onScroll, pin, release } =
+    useFollowBottom(anchorId)
   // Messages already present on first render are history: only messages
   // that arrive afterwards get the entrance animation.
   const history = useRef<Set<string> | null>(null)
@@ -678,6 +695,22 @@ export function Thread({
     [rendered]
   )
 
+  // If the linked message renders only after the history (or the link
+  // changes while the thread is open), scroll to it then. Either way it
+  // glows once so the eye finds it.
+  const jumped = useRef<string | null>(null)
+  useEffect(() => {
+    if (!anchorId || jumped.current === anchorId) return
+    const el = document.getElementById(anchorId)
+    if (!el) return
+    jumped.current = anchorId
+    release()
+    el.scrollIntoView({ block: "start" })
+    el.dataset.flash = ""
+    const timer = setTimeout(() => delete el.dataset.flash, 1600)
+    return () => clearTimeout(timer)
+  }, [anchorId, rendered, release])
+
   // Sending a message brings the thread back down, even from far up.
   const lastMessage = messages.at(-1)
   const sentId =
@@ -723,7 +756,9 @@ export function Thread({
               </div>
             ) : null}
             <div
-              className={`flex flex-col gap-3 ${isNew(message.id) ? "msg-enter" : ""}`}
+              // Pipeline runs link here: /bots/<id>#task-<taskId>.
+              id={taskAnchor(message)}
+              className={`flex scroll-mt-6 flex-col gap-3 ${isNew(message.id) ? "msg-enter" : ""}`}
               data-from={message.role === "user" ? "user" : "bot"}
             >
               {/* Time zone and locale are the viewer's, so only after hydration. */}
