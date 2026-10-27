@@ -47,3 +47,11 @@ export function currentStep(run: PipelineRun) {
     (s) => s.status === "running" || s.status === "waiting"
   )
 }
+
+/**
+ * A summary that says the step had nothing to do ("No new content.",
+ * "Nothing sent: …"), so the run can play it down.
+ */
+export function isNoop(summary: string) {
+  return /^(no|nothing|none)\b/i.test(summary)
+}

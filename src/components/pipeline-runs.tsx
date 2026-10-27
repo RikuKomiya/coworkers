@@ -20,6 +20,7 @@ import { useHub } from "@/lib/hub-context"
 import {
   currentStep,
   formatSpan,
+  isNoop,
   stepSpan,
   summarize,
 } from "@/lib/pipeline-summary"
@@ -82,8 +83,8 @@ function ProgressRing({ done, total }: { done: number; total: number }) {
   const share = Math.max(done / total, 0.06)
   return (
     <svg
-      width={20}
-      height={20}
+      width={24}
+      height={24}
       viewBox="0 0 20 20"
       aria-hidden
       className="-rotate-90 text-kumo-default"
@@ -112,74 +113,84 @@ function ProgressRing({ done, total }: { done: number; total: number }) {
   )
 }
 
-const MARKER =
-  "flex size-6 shrink-0 items-center justify-center rounded-full text-xs tabular-nums"
+const NODE = 28
 
-/** A step's status in a 24px circle. */
-function StepMarker({
+const BADGE =
+  "step-done absolute -right-1 -bottom-1 flex size-4 items-center justify-center rounded-full text-white ring-2 ring-kumo-base"
+
+/**
+ * A step's place on the rail: the bot's face, or a plain circle for
+ * approvals. Success needs no mark; a spinner, a badge or a fade says
+ * everything else.
+ */
+function StepNode({
   status,
   index,
+  bot,
+  approval,
 }: {
   status: PipelineRunStep["status"]
   index: number
+  bot?: BotSummary
+  approval: boolean
 }) {
-  switch (status) {
-    case "running":
-      return (
-        <span className={`${MARKER} relative font-medium text-kumo-default`}>
-          <svg
-            viewBox="0 0 24 24"
-            aria-hidden
-            className="step-spin absolute inset-0 size-6"
-          >
-            <circle
-              cx={12}
-              cy={12}
-              r={10.5}
-              fill="none"
-              strokeWidth={1.5}
-              className="stroke-kumo-line"
-            />
-            <path
-              d="M12 1.5a10.5 10.5 0 0 1 10.5 10.5"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={1.5}
-              strokeLinecap="round"
-            />
-          </svg>
-          {index + 1}
-        </span>
-      )
-    case "done":
-      return (
-        <span className={`${MARKER} step-done bg-kumo-success text-white`}>
-          <CheckIcon size={14} />
-        </span>
-      )
-    case "failed":
-      return (
-        <span className={`${MARKER} step-done bg-kumo-danger text-white`}>
-          <XIcon size={14} />
-        </span>
-      )
-    case "waiting":
-      return (
-        <span className={`${MARKER} step-done bg-kumo-warning text-white`}>
-          <WarningIcon size={14} />
-        </span>
-      )
-    default:
-      return (
-        <span
-          className={`${MARKER} border border-dashed border-kumo-line text-kumo-subtle ${
-            status === "skipped" ? "opacity-50" : ""
-          }`}
+  const idle = status === "pending" || status === "skipped"
+  const face = bot ? (
+    <BotAvatar avatar={bot.avatar} size={NODE} />
+  ) : (
+    <span
+      className={`flex size-7 items-center justify-center rounded-full text-xs text-kumo-subtle tabular-nums ${
+        idle
+          ? "outline outline-1 -outline-offset-1 outline-kumo-line outline-dashed"
+          : "bg-(--fill-hover)"
+      }`}
+    >
+      {approval && status === "done" ? <CheckIcon size={14} /> : index + 1}
+    </span>
+  )
+
+  return (
+    <span
+      className={`relative flex size-7 shrink-0 items-center justify-center rounded-full bg-kumo-base transition-opacity duration-(--duration-quick) ${
+        idle ? "opacity-40" : ""
+      }`}
+    >
+      {face}
+      {status === "running" ? (
+        <svg
+          viewBox="0 0 36 36"
+          aria-hidden
+          className="step-spin absolute -inset-1 size-9 text-kumo-default"
         >
-          {index + 1}
+          <circle
+            cx={18}
+            cy={18}
+            r={17}
+            fill="none"
+            strokeWidth={1.5}
+            className="stroke-kumo-line"
+          />
+          <path
+            d="M18 1a17 17 0 0 1 17 17"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={1.5}
+            strokeLinecap="round"
+          />
+        </svg>
+      ) : null}
+      {status === "failed" ? (
+        <span className={`${BADGE} bg-kumo-danger`}>
+          <XIcon size={10} />
         </span>
-      )
-  }
+      ) : null}
+      {status === "waiting" ? (
+        <span className={`${BADGE} bg-kumo-warning`}>
+          <WarningIcon size={10} />
+        </span>
+      ) : null}
+    </span>
+  )
 }
 
 /** A step's result: folded when long, with the full text a click away. */
@@ -265,6 +276,10 @@ function StepRow({
   const bot = stepBot(run, index, state.bots)
   const span = stepSpan(step, now)
   const settled = step.status !== "pending" && step.status !== "skipped"
+  // The rail below this step is solid once the next one has started.
+  const next = run.steps[index + 1]
+  const started = (s?: PipelineRunStep) =>
+    s ? s.status !== "pending" && s.status !== "skipped" : false
 
   let summary: React.ReactNode = null
   if (step.status === "running") {
@@ -289,10 +304,10 @@ function StepRow({
         to="/bots/$botId"
         params={{ botId: bot.id }}
         hash={`task-${run.id}:${index}`}
-        className="inline-flex items-center gap-1.5 px-1 text-xs text-kumo-subtle hover:text-kumo-default"
+        className="inline-flex items-center gap-1.5 rounded-full bg-(--fill-hover) px-2.5 py-1 text-xs text-kumo-subtle transition-colors duration-(--duration-quick) hover:bg-(--fill-active) hover:text-kumo-default"
       >
         <MessageIcon size={13} />
-        Open in chat
+        {step.status === "failed" ? "See what happened" : "Open in chat"}
       </Link>
     ) : null
   const note = plan?.kind === "approval" && plan.note ? plan.note : null
@@ -302,8 +317,12 @@ function StepRow({
 
   const head = (
     <>
-      <StepMarker status={step.status} index={index} />
-      {bot ? <BotAvatar avatar={bot.avatar} size={24} /> : null}
+      <StepNode
+        status={step.status}
+        index={index}
+        bot={bot}
+        approval={plan?.kind === "approval"}
+      />
       <span
         className={`shrink-0 text-[15px] ${
           settled ? "font-medium text-kumo-default" : "text-kumo-subtle"
@@ -328,16 +347,30 @@ function StepRow({
 
   return (
     <li
-      className="t-acc step-capsule"
+      className="t-acc step-row"
       data-open={open}
       data-current={step.status === "running" || step.status === "waiting"}
     >
+      {index > 0 ? (
+        <span
+          aria-hidden
+          className="step-rail step-rail-in"
+          data-on={started(step)}
+        />
+      ) : null}
+      {next ? (
+        <span
+          aria-hidden
+          className="step-rail step-rail-out"
+          data-on={started(next)}
+        />
+      ) : null}
       {expandable ? (
         <button
           type="button"
           aria-expanded={open}
           onClick={onToggle}
-          className="step-head flex min-h-13 w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-kumo-focus"
+          className="step-head flex min-h-13 w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-kumo-focus"
         >
           {head}
           <span className="t-acc-chevron shrink-0 text-kumo-subtle">
@@ -352,7 +385,7 @@ function StepRow({
       {expandable ? (
         <div className="t-acc-panel">
           <div className="t-acc-panel-inner">
-            <div className="space-y-2 pt-0.5 pr-3 pb-3 pl-12">
+            <div className="space-y-2 pt-0.5 pr-3 pb-3 pl-13">
               {note ? (
                 <p className="text-sm text-pretty text-kumo-default">{note}</p>
               ) : null}
@@ -360,14 +393,22 @@ function StepRow({
                 <StepOutput runId={run.id} index={index} output={step.output} />
               ) : null}
               {step.files?.length ? <FileChips names={step.files} /> : null}
-              {step.error ? (
-                <p
-                  className={`text-sm text-pretty ${
-                    step.status === "failed"
-                      ? "text-kumo-danger"
-                      : "text-kumo-subtle"
-                  }`}
-                >
+              {step.error && step.status === "failed" ? (
+                <div className="flex gap-2.5 rounded-xl bg-kumo-danger-tint/60 px-3.5 py-2.5">
+                  <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-kumo-danger text-white">
+                    <XIcon size={10} />
+                  </span>
+                  <div className="min-w-0 space-y-0.5">
+                    <p className="text-sm font-medium text-kumo-danger">
+                      Couldn’t finish
+                    </p>
+                    <p className="text-sm text-pretty break-words text-kumo-default">
+                      {step.error}
+                    </p>
+                  </div>
+                </div>
+              ) : step.error ? (
+                <p className="text-sm text-pretty text-kumo-subtle">
                   {step.error}
                 </p>
               ) : null}
@@ -381,8 +422,9 @@ function StepRow({
 }
 
 /**
- * A run's steps as rows. The step being worked on sits on a highlight that
- * slides to the next row when it finishes.
+ * A run's steps as rows on one surface, joined by a rail through their
+ * faces. The step being worked on sits on a highlight that slides to the
+ * next row when it finishes.
  */
 function StepList({ run }: { run: PipelineRun }) {
   const active = run.status === "running" || run.status === "waiting"
@@ -445,7 +487,7 @@ function StepList({ run }: { run: PipelineRun }) {
   }
 
   return (
-    <ol ref={list} className="relative flex flex-col gap-1.5">
+    <ol ref={list} className="run-steps relative flex flex-col">
       <span ref={highlight} aria-hidden className="step-highlight" />
       {run.steps.map((_, i) => (
         <StepRow
@@ -466,7 +508,7 @@ function Headline({ run }: { run: PipelineRun }) {
   const total = run.steps.length
   const done = run.steps.filter((s) => s.status === "done").length
   const failedAt = run.steps.findIndex((s) => s.status === "failed")
-  const glyph = "flex size-5 shrink-0 items-center justify-center rounded-full"
+  const glyph = "flex size-6 shrink-0 items-center justify-center rounded-full"
   switch (run.status) {
     case "running":
       return (
@@ -481,32 +523,46 @@ function Headline({ run }: { run: PipelineRun }) {
       return (
         <>
           <span className={`${glyph} bg-kumo-warning text-white`}>
-            <WarningIcon size={12} />
+            <WarningIcon size={14} />
           </span>
           <span className="text-[15px] font-semibold text-kumo-default">
             Waiting for your OK
           </span>
         </>
       )
-    case "done":
+    case "done": {
+      // Every bot step said it had nothing to do: say so here, once.
+      const replies = run.steps.filter(
+        (s, i) => run.plan[i]?.kind === "bot" && s.status === "done"
+      )
+      const idle =
+        replies.length > 0 &&
+        replies.every((s) => s.output && isNoop(summarize(s.output)))
       return (
         <>
           <span className={`${glyph} bg-kumo-success text-white`}>
-            <CheckIcon size={12} />
+            <CheckIcon size={14} />
           </span>
           <span className="text-[15px] font-semibold text-kumo-default tabular-nums">
             Done
             {run.finishedAt
               ? ` in ${formatSpan(run.finishedAt - run.startedAt)}`
               : ""}
+            {idle ? (
+              <span className="font-normal text-kumo-subtle">
+                {" "}
+                · Nothing new
+              </span>
+            ) : null}
           </span>
         </>
       )
+    }
     case "failed":
       return (
         <>
           <span className={`${glyph} bg-kumo-danger text-white`}>
-            <XIcon size={12} />
+            <XIcon size={14} />
           </span>
           <span className="text-[15px] font-semibold text-kumo-default">
             {failedAt === -1 ? "Failed" : `Failed at step ${failedAt + 1}`}
@@ -517,7 +573,7 @@ function Headline({ run }: { run: PipelineRun }) {
       return (
         <>
           <span className={`${glyph} border border-kumo-line text-kumo-subtle`}>
-            <XIcon size={12} />
+            <XIcon size={14} />
           </span>
           <span className="text-[15px] font-semibold text-kumo-default">
             Stopped

@@ -263,13 +263,15 @@
 }
 
 /*
- * Pipeline runs. Each step is a capsule; the one being worked on wears a
- * ring that slides to the next capsule (transform + height, placed from
- * script like the tabs pill). Steps that finish while the page is open pop their mark in;
+ * Pipeline runs. A run's steps share one surface, joined by a rail through
+ * their faces like the editor's flow. The one being worked on sits on a
+ * tint that slides to the next row (transform + height, placed from script
+ * like the tabs pill). Marks that land while the page is open pop in;
  * marks already there on load do not.
  */
-.step-capsule {
-  border-radius: 16px;
+.run-steps {
+  padding: 4px;
+  border-radius: 20px;
   background: var(--color-kumo-base);
   box-shadow:
     0 0 0 1px var(--color-kumo-line),
@@ -277,18 +279,52 @@
     0 2px 8px oklch(0 0 0 / 0.04);
 }
 
-/* A ring over the capsule being worked on; it slides to the next one. */
+.step-row {
+  position: relative;
+}
+
+/* Rail segments run through the node's center (12px pad + 14px), stopping
+   just short of the face (wider while a spinner rings it). An expanded row's
+   segment carries on down beside its output. */
+.step-rail {
+  position: absolute;
+  left: 25.25px;
+  width: 1.5px;
+  border-radius: 1px;
+  background: var(--color-kumo-line);
+  transition: background-color var(--duration-slow) var(--ease-smooth-out);
+}
+.step-rail[data-on="true"] {
+  background: color-mix(
+    in oklch,
+    var(--text-color-kumo-subtle) 45%,
+    transparent
+  );
+}
+.step-rail-in {
+  top: 0;
+  height: 9px;
+}
+.step-rail-out {
+  top: 43px;
+  bottom: 0;
+}
+/* Clear of the spinner ring around a working face. */
+.step-row[data-current="true"] > .step-rail-in {
+  height: 5px;
+}
+.step-row[data-current="true"] > .step-rail-out {
+  top: 47px;
+}
+
+/* A tint behind the row being worked on; it slides to the next one. */
 .step-highlight {
   position: absolute;
-  inset-inline: 0;
+  inset-inline: 4px;
   top: 0;
-  z-index: 1;
-  border-radius: 16px;
+  border-radius: 14px;
   pointer-events: none;
-  box-shadow:
-    0 0 0 1.5px
-      color-mix(in oklch, var(--text-color-kumo-default) 30%, transparent),
-    0 6px 20px oklch(0 0 0 / 0.06);
+  background: var(--fill-hover);
   opacity: 0;
   transition:
     transform var(--duration-slow) var(--ease-smooth-out),

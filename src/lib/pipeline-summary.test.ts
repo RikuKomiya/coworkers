@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { formatSpan, summarize } from "./pipeline-summary"
+import { formatSpan, isNoop, summarize } from "./pipeline-summary"
 
 describe("summarize", () => {
   it("keeps the first sentence as plain text", () => {
@@ -34,5 +34,20 @@ describe("formatSpan", () => {
     expect(formatSpan(42_000)).toBe("42s")
     expect(formatSpan(82_000)).toBe("1m 22s")
     expect(formatSpan(7_500_000)).toBe("2h 5m")
+  })
+})
+
+describe("isNoop", () => {
+  it("spots replies that did nothing", () => {
+    expect(isNoop("No new content.")).toBe(true)
+    expect(isNoop("Nothing sent: step 1 confirms no new content.")).toBe(true)
+  })
+
+  it("leaves real work alone", () => {
+    expect(isNoop("New edition, not a retry: edition 2026-W45 rev 1.")).toBe(
+      false
+    )
+    expect(isNoop("Published.")).toBe(false)
+    expect(isNoop("Notified 3 people.")).toBe(false)
   })
 })
