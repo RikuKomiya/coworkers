@@ -11,6 +11,7 @@ import {
   MessageIcon,
   PipelineIcon,
   PlayIcon,
+  StopIcon,
   WarningIcon,
   XIcon,
 } from "@/components/icons"
@@ -120,7 +121,7 @@ const BADGE =
 
 /**
  * A step's place on the rail: the bot's face, or a plain circle for
- * approvals. Success needs no mark; a spinner, a badge or a fade says
+ * approvals. Success needs no mark; a working face, a badge or a fade says
  * everything else.
  */
 function StepNode({
@@ -136,7 +137,11 @@ function StepNode({
 }) {
   const idle = status === "pending" || status === "skipped"
   const face = bot ? (
-    <BotAvatar avatar={bot.avatar} size={NODE} />
+    <BotAvatar
+      avatar={bot.avatar}
+      size={NODE}
+      status={status === "running" ? "working" : "idle"}
+    />
   ) : (
     <span
       className={`flex size-7 items-center justify-center rounded-full text-xs text-kumo-subtle tabular-nums ${
@@ -151,12 +156,12 @@ function StepNode({
 
   return (
     <span
-      className={`relative flex size-7 shrink-0 items-center justify-center rounded-full bg-kumo-base transition-opacity duration-(--duration-quick) ${
+      className={`relative flex size-7 shrink-0 items-center justify-center rounded-full transition-opacity duration-(--duration-quick) ${
         idle ? "opacity-40" : ""
       }`}
     >
       {face}
-      {status === "running" ? (
+      {status === "running" && !bot ? (
         <svg
           viewBox="0 0 36 36"
           aria-hidden
@@ -223,15 +228,15 @@ function StepOutput({
       ? `${output.slice(0, FOLD_CHARS)}…`
       : output
   return (
-    <div className="space-y-1">
-      <div className="rounded-xl bg-kumo-tint px-3.5 py-2.5 text-sm break-words">
+    <div className="rounded-xl bg-kumo-tint px-3.5 py-2.5 text-sm break-words">
+      <div className={long && !open ? "fold-fade" : undefined}>
         <Prose text={text} />
       </div>
       {long ? (
         <button
           type="button"
           onClick={() => void toggle()}
-          className="px-1 text-xs text-kumo-subtle hover:text-kumo-default"
+          className="mt-1 text-xs font-medium text-kumo-subtle hover:text-kumo-default"
         >
           {open ? "Show less" : "Show all"}
         </button>
@@ -240,15 +245,15 @@ function StepOutput({
   )
 }
 
+const CHIP =
+  "inline-flex h-7 items-center gap-1.5 rounded-full bg-(--fill-hover) px-2.5 text-xs text-kumo-subtle"
+
 function FileChips({ names }: { names: string[] }) {
   return (
-    <p className="flex flex-wrap gap-1.5">
+    <p className="flex min-w-0 flex-wrap gap-1.5">
       {names.map((name) => (
-        <span
-          key={name}
-          className="inline-flex items-center gap-1 rounded-full bg-(--fill-hover) px-2 py-0.5 text-xs text-kumo-subtle"
-        >
-          <FileIcon size={12} />
+        <span key={name} className={CHIP}>
+          <FileIcon size={13} />
           {name}
         </span>
       ))}
@@ -283,7 +288,9 @@ function StepRow({
 
   let summary: React.ReactNode = null
   if (step.status === "running") {
-    summary = <ShimmerText text="Working…" className="truncate" />
+    // Block, not inline-block: an inline-block that clips sits on its
+    // bottom edge and rides above the name's baseline.
+    summary = <ShimmerText text="Working…" className="block truncate" />
   } else if (step.status === "waiting") {
     summary = (
       <span className="truncate text-kumo-warning">Waiting for you</span>
@@ -304,7 +311,7 @@ function StepRow({
         to="/bots/$botId"
         params={{ botId: bot.id }}
         hash={`task-${run.id}:${index}`}
-        className="inline-flex items-center gap-1.5 rounded-full bg-(--fill-hover) px-2.5 py-1 text-xs text-kumo-subtle transition-colors duration-(--duration-quick) hover:bg-(--fill-active) hover:text-kumo-default"
+        className={`${CHIP} ml-auto shrink-0 transition-colors duration-(--duration-quick) hover:bg-(--fill-active) hover:text-kumo-default`}
       >
         <MessageIcon size={13} />
         {step.status === "failed" ? "See what happened" : "Open in chat"}
@@ -392,7 +399,6 @@ function StepRow({
               {step.output ? (
                 <StepOutput runId={run.id} index={index} output={step.output} />
               ) : null}
-              {step.files?.length ? <FileChips names={step.files} /> : null}
               {step.error && step.status === "failed" ? (
                 <div className="flex gap-2.5 rounded-xl bg-kumo-danger-tint/60 px-3.5 py-2.5">
                   <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-kumo-danger text-white">
@@ -412,7 +418,12 @@ function StepRow({
                   {step.error}
                 </p>
               ) : null}
-              {chat}
+              {step.files?.length || chat ? (
+                <div className="flex items-start gap-1.5">
+                  {step.files?.length ? <FileChips names={step.files} /> : null}
+                  {chat}
+                </div>
+              ) : null}
             </div>
           </div>
         </div>
@@ -662,13 +673,16 @@ function RunCard({
         {active ? (
           <Button
             size="sm"
-            variant="ghost"
-            className="shrink-0 rounded-full"
+            variant="secondary"
+            shape="circle"
+            // Its center mirrors the status glyph's on the left: 32px in.
+            className="mr-2 shrink-0"
+            aria-label="Stop run"
+            title="Stop run"
+            icon={<StopIcon />}
             disabled={busy || !hub.pipelines}
             onClick={() => void act(() => hub.pipelines!.stop(run.id))}
-          >
-            Stop
-          </Button>
+          />
         ) : null}
       </div>
       <div className="run-acc-panel">

@@ -269,9 +269,11 @@
  * like the tabs pill). Marks that land while the page is open pop in;
  * marks already there on load do not.
  */
+/* Radii nest: the run's shell is 24px with 8px padding, so this is 16px;
+   with 4px padding, the rows and their highlight are 12px. */
 .run-steps {
   padding: 4px;
-  border-radius: 20px;
+  border-radius: 16px;
   background: var(--color-kumo-base);
   box-shadow:
     0 0 0 1px var(--color-kumo-line),
@@ -284,8 +286,8 @@
 }
 
 /* Rail segments run through the node's center (12px pad + 14px), stopping
-   just short of the face (wider while a spinner rings it). An expanded row's
-   segment carries on down beside its output. */
+   just short of the face. An expanded row's segment carries on down beside
+   its output. */
 .step-rail {
   position: absolute;
   left: 25.25px;
@@ -309,12 +311,10 @@
   top: 43px;
   bottom: 0;
 }
-/* Clear of the spinner ring around a working face. */
-.step-row[data-current="true"] > .step-rail-in {
-  height: 5px;
-}
-.step-row[data-current="true"] > .step-rail-out {
-  top: 47px;
+
+/* A folded step output fades out instead of stopping at a hard edge. */
+.fold-fade {
+  mask-image: linear-gradient(to bottom, black calc(100% - 48px), transparent);
 }
 
 /* A tint behind the row being worked on; it slides to the next one. */
@@ -322,7 +322,7 @@
   position: absolute;
   inset-inline: 4px;
   top: 0;
-  border-radius: 14px;
+  border-radius: 12px;
   pointer-events: none;
   background: var(--fill-hover);
   opacity: 0;
