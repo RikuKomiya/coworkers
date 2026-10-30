@@ -776,6 +776,27 @@ export class BotAgent extends Think<Env, BotState> {
 
   // ── Lifecycle ───────────────────────────────────────────────────────
 
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env)
+    // The Agents SDK answers RPC and state frames before onMessage runs, so
+    // without this a call's link token would reach every @callable method.
+    const receive = this.onMessage
+    this.onMessage = async (connection, message) => {
+      if (
+        voiceCallOf(connection) &&
+        (typeof message !== "string" || !parseAgentFrame(message))
+      ) {
+        this.sendTo(connection, {
+          type: "error",
+          code: "bad_frame",
+          message: "Not a voice protocol frame.",
+        })
+        return
+      }
+      return receive(connection, message)
+    }
+  }
+
   async onStart() {
     this.sql`CREATE TABLE IF NOT EXISTS activity (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -4125,16 +4146,9 @@ export class BotAgent extends Think<Env, BotState> {
   override async onMessage(connection: Connection, message: WSMessage) {
     const callId = voiceCallOf(connection)
     if (!callId) return super.onMessage(connection, message)
-    const frame = typeof message === "string" ? parseAgentFrame(message) : null
-    if (!frame) {
-      this.sendTo(connection, {
-        type: "error",
-        code: "bad_frame",
-        message: "Not a voice protocol frame.",
-      })
-      return
-    }
-    await this.onVoiceFrame(connection, callId, frame)
+    // The constructor already turned away anything else on a call's socket.
+    const frame = parseAgentFrame(message as string)
+    if (frame) await this.onVoiceFrame(connection, callId, frame)
   }
 
   /** Chat frames and state go to browsers only; the call has its own protocol. */
