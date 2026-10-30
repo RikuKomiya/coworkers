@@ -65,11 +65,10 @@ Copy `.env.example` to `.env` (git-ignored) and fill it in.
 1. In the repo root, fill `LIVEKIT_URL`, `LIVEKIT_API_KEY`,
    `LIVEKIT_API_SECRET` and `VOICE_LINK_SECRET` in `.dev.vars`, then run
    `pnpm dev` (the app on http://localhost:3000).
-2. In another terminal:
+2. In another terminal, from the repo root:
 
    ```bash
-   cd voice-agent
-   uv run --env-file .env agent.py dev
+   pnpm dev:voice
    ```
 
 3. Start a call from a bot's page.

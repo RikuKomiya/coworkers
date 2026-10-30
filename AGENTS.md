@@ -145,6 +145,7 @@ is only needed for deploys and remote resource commands — `cf dev`,
 
 ```bash
 pnpm dev         # cf dev   — Vite dev server on :3000, running on workerd
+pnpm dev:voice   # the LiveKit agent in voice-agent/, against pnpm dev
 pnpm build       # cf build — production build into .cloudflare/output/
 pnpm run deploy  # cf deploy — build + upload + deploy
 pnpm typecheck   # regenerate binding types, then tsc
