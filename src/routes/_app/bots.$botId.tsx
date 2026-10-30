@@ -32,6 +32,7 @@ import { useLatchedWhileClosing } from "@/components/slide-shell"
 import { SplitView } from "@/components/split-view"
 import { TaskStrip } from "@/components/task-strip"
 import { Thread } from "@/components/thread"
+import { CallBar, CallButton, useVoiceCall } from "@/components/voice-call"
 import { BotContext } from "@/lib/bot-context"
 import { useHub } from "@/lib/hub-context"
 import { useLayout } from "@/lib/layout-context"
@@ -78,7 +79,7 @@ function BotRoute() {
     [snapshot.messagesJson]
   )
   const fallback = (
-    <BotLayout botId={botId} state={snapshot.state} agent={null}>
+    <BotLayout botId={botId} state={snapshot.state} agent={null} actions={null}>
       <Thread bot={snapshot.state} messages={messages} busy={false} />
       <Composer
         botName={snapshot.state.name}
@@ -93,7 +94,12 @@ function BotRoute() {
     <ClientOnly fallback={fallback}>
       <Suspense fallback={fallback}>
         {/* Remount per bot so each gets its own socket and chat state. */}
-        <LiveBot key={botId} botId={botId} initialState={snapshot.state} />
+        <LiveBot
+          key={botId}
+          botId={botId}
+          initialState={snapshot.state}
+          voiceEnabled={snapshot.voiceEnabled}
+        />
       </Suspense>
     </ClientOnly>
   )
@@ -134,11 +140,14 @@ function BotLayout({
   botId,
   state,
   agent,
+  actions,
   children,
 }: {
   botId: string
   state: BotState
   agent: ReturnType<typeof useAgent<BotAgent, BotState>> | null
+  /** Header buttons that need the live bot, before the panel links. */
+  actions: React.ReactNode
   children: React.ReactNode
 }) {
   const matchRoute = useMatchRoute()
@@ -204,6 +213,7 @@ function BotLayout({
               </h1>
             </div>
             <div className="flex items-center gap-1">
+              {actions}
               <PanelLink
                 to="/bots/$botId/settings"
                 label="Settings"
@@ -234,9 +244,11 @@ function BotLayout({
 function LiveBot({
   botId,
   initialState,
+  voiceEnabled,
 }: {
   botId: string
   initialState: BotState
+  voiceEnabled: boolean
 }) {
   const hub = useHub()
   const agent = useAgent<BotAgent, BotState>({
@@ -337,6 +349,12 @@ function LiveBot({
     [agent]
   )
 
+  const hangUpOnBot = useCallback(
+    (callId: string) => agent.stub.hangUpVoiceCall(callId),
+    [agent]
+  )
+  const call = useVoiceCall(botId, hangUpOnBot)
+
   const onAttach = useCallback(
     async (file: File) => {
       const bytes = new Uint8Array(await file.arrayBuffer())
@@ -349,7 +367,20 @@ function LiveBot({
   )
 
   return (
-    <BotLayout botId={botId} state={state} agent={agent}>
+    <BotLayout
+      botId={botId}
+      state={state}
+      agent={agent}
+      actions={
+        voiceEnabled ? (
+          <CallButton
+            phase={call.phase}
+            onStart={() => void call.start()}
+            onHangUp={call.hangUp}
+          />
+        ) : null
+      }
+    >
       <Thread
         bot={state}
         messages={chat.messages}
@@ -376,6 +407,7 @@ function LiveBot({
         </p>
       ) : null}
       <TaskStrip tasks={state.tasks ?? []} onStop={onStopTask} />
+      <CallBar phase={call.phase} view={state.voice} onHangUp={call.hangUp} />
       <Composer
         botName={state.name}
         busy={busy}

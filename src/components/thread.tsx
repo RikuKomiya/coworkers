@@ -16,6 +16,7 @@ import {
   ClockIcon,
   CrawlIcon,
   EnvelopeSimpleIcon,
+  MicIcon,
   PipelineIcon,
   TaskIcon,
   TerminalIcon,
@@ -662,9 +663,19 @@ function UserMessage({ message }: { message: UIMessage }) {
   }
   // Check-ins are invisible: only what the bot chose to say shows up.
   if (origin?.kind === "check-in") return null
+  const spoken = metaOf(message).via === "voice"
   return (
-    <div className="ml-auto w-fit max-w-[75%] rounded-[22px] bg-kumo-contrast px-[18px] py-3 text-[15px] leading-[1.65] text-pretty whitespace-pre-wrap text-kumo-inverse">
-      {text}
+    <div className="ml-auto flex w-fit max-w-[75%] items-center gap-2">
+      {spoken ? (
+        <MicIcon
+          size={14}
+          aria-label="Said on a call"
+          className="shrink-0 text-kumo-subtle"
+        />
+      ) : null}
+      <div className="w-fit rounded-[22px] bg-kumo-contrast px-[18px] py-3 text-[15px] leading-[1.65] text-pretty whitespace-pre-wrap text-kumo-inverse">
+        {text}
+      </div>
     </div>
   )
 }

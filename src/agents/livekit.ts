@@ -64,21 +64,23 @@ export async function dispatchVoiceAgent(
   const token = await liveKitToken(config, {
     video: { room, roomAdmin: true },
   })
-  const response = await fetch(
-    `${liveKitHttpUrl(config.url)}/twirp/livekit.AgentDispatchService/CreateDispatch`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        room,
-        agent_name: VOICE_AGENT_NAME,
-        metadata: JSON.stringify(metadata),
-      }),
-    }
-  )
+  const endpoint = `${liveKitHttpUrl(config.url)}/twirp/livekit.AgentDispatchService/CreateDispatch`
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      room,
+      agent_name: VOICE_AGENT_NAME,
+      metadata: JSON.stringify(metadata),
+    }),
+  }).catch(() => {
+    throw new Error(
+      `Could not reach LiveKit at ${config.url}. Check LIVEKIT_URL.`
+    )
+  })
   if (!response.ok) {
     throw new Error(
       `LiveKit refused the agent dispatch (${response.status}): ${(await response.text()).slice(0, 200)}`

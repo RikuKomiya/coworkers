@@ -39,6 +39,7 @@
     "ai": "^7.0.150",
     "drizzle-orm": "^0.45.3",
     "drizzle-zod": "^0.8.3",
+    "livekit-client": "^2.23.0",
     "postal-mime": "^4.0.4",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
