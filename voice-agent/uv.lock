@@ -494,7 +494,7 @@ name = "coworkers-voice-agent"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
-    { name = "livekit-agents", extra = ["cartesia", "deepgram", "elevenlabs", "openai", "silero", "turn-detector"] },
+    { name = "livekit-agents", extra = ["cartesia", "deepgram", "elevenlabs", "openai", "silero", "soniox", "turn-detector"] },
     { name = "websockets" },
 ]
 
@@ -506,7 +506,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "livekit-agents", extras = ["cartesia", "deepgram", "elevenlabs", "openai", "silero", "turn-detector"], specifier = ">=1.8.10" },
+    { name = "livekit-agents", extras = ["cartesia", "deepgram", "elevenlabs", "openai", "silero", "soniox", "turn-detector"], specifier = ">=1.8.10" },
     { name = "websockets", specifier = ">=17.3" },
 ]
 
@@ -1022,6 +1022,9 @@ openai = [
 silero = [
     { name = "livekit-plugins-silero" },
 ]
+soniox = [
+    { name = "livekit-plugins-soniox" },
+]
 turn-detector = [
     { name = "livekit-plugins-turn-detector" },
 ]
@@ -1151,6 +1154,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/16/f4/4ee656d42f81b13e016c7186c8b8d38c12636ef26b010e82fd496129b638/livekit_plugins_silero-1.8.10.tar.gz", hash = "sha256:4e35df7a4edbafa5154b9f730f3593db7cf42a93cf663eb937fb720fc4a38e39", size = 1955462, upload-time = "2026-10-29T02:22:46.766Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/40/b4/c52023a9a5bf47024a822a4f5f3843f4a3a8772df883d1f0e658a737cbc5/livekit_plugins_silero-1.8.10-py3-none-any.whl", hash = "sha256:4c31f05c62cc03416d1c3971069268249be3c941beadfc2e0c332c62e8512d86", size = 3903182, upload-time = "2026-10-29T02:22:44.875Z" },
+]
+
+[[package]]
+name = "livekit-plugins-soniox"
+version = "1.8.10"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "livekit-agents" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/81/33/698bf2c210fa88b8040af1d1daeead6f61f86b413fee0be4a3d4b0c6a88f/livekit_plugins_soniox-1.8.10.tar.gz", hash = "sha256:80cade80c15ec6f048f2d38f50c324bf766283586bbe1ef41e1f7cf7061ba88c", size = 21638, upload-time = "2026-10-29T02:22:52.277Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d8/ac/0e4850e832bfb5650651a7d0916b1295482399be53c0f96e173636de1fe5/livekit_plugins_soniox-1.8.10-py3-none-any.whl", hash = "sha256:c27cf441ad8b34d68fb0181c531bf69185ee0f170f96e742ca1e9fc456e5bf10", size = 22475, upload-time = "2026-10-29T02:22:51.006Z" },
 ]
 
 [[package]]

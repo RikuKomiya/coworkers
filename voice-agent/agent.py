@@ -28,7 +28,7 @@ from livekit.agents import (
 from livekit.agents.voice import SpeechHandle
 from livekit.agents.voice.agent_activity import _SpeechHandleContextVar
 from livekit.agents.voice.events import CloseEvent, UserInputTranscribedEvent
-from livekit.plugins import cartesia, deepgram, elevenlabs, openai, silero
+from livekit.plugins import cartesia, deepgram, elevenlabs, openai, silero, soniox
 
 from protocol import Frame, LinkConfig, Turn, VoiceLink
 
@@ -52,6 +52,12 @@ STT_PROVIDERS: dict[str, Callable[[], object]] = {
     ),
     "deepgram": lambda: deepgram.STT(
         model=_env("VOICE_STT_MODEL", "nova-3"), language=_env("VOICE_STT_LANGUAGE", "multi")
+    ),
+    "soniox": lambda: soniox.STT(
+        params=soniox.STTOptions(
+            model=_env("VOICE_STT_MODEL", "stt-rt-v5"),
+            language_hints=_env("VOICE_STT_LANGUAGE", "ja,en").split(","),
+        )
     ),
     "openai": lambda: openai.STT(
         model=_env("VOICE_STT_MODEL", "gpt-4o-transcribe"),
@@ -210,10 +216,10 @@ async def entrypoint(ctx: JobContext) -> None:
     await ctx.connect()
     participant = await ctx.wait_for_participant()
 
-    tts_factory, voice_option = TTS_PROVIDERS[_env("VOICE_TTS", "inference")]
+    tts_factory, voice_option = TTS_PROVIDERS[_env("VOICE_TTS", "openai")]
     tts = tts_factory()
     session = AgentSession(
-        stt=STT_PROVIDERS[_env("VOICE_STT", "inference")](),
+        stt=STT_PROVIDERS[_env("VOICE_STT", "soniox")](),
         tts=tts,
         llm=NoLLM(),
         vad=ctx.proc.userdata["vad"],
