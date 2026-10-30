@@ -265,6 +265,19 @@ export interface BotState {
   lastCheckIn?: number
   /** App calls from the bot's scripts, paused until the user answers. */
   scriptApprovals?: ScriptApproval[]
+  /** Background tasks (start_task) still running, oldest first. */
+  tasks?: BackgroundTask[]
+}
+
+/** Work the bot handed to a helper of its own, so the chat stays free. */
+export interface BackgroundTask {
+  id: string
+  /** Short label the user sees, in their language. */
+  title: string
+  /** Unix ms. */
+  startedAt: number
+  /** Latest thing the helper did, e.g. "Scraped amazon.co.jp". */
+  step?: string
 }
 
 /**
@@ -304,7 +317,8 @@ export interface MessageOrigin {
     | "crawl"
     | "pipeline"
     | "script"
-  /** Bot, routine or pipeline name, email sender, webhook source, app name, crawled host, or what a script was for. */
+    | "task"
+  /** Bot, routine or pipeline name, email sender, webhook source, app name, crawled host, what a script was for, or a background task's title. */
   name: string
   avatar?: BotAvatarKind
 }
@@ -332,6 +346,8 @@ export interface MessageMeta {
 export type TaskReplyTo =
   | { kind: "bot"; botId: string }
   | { kind: "pipeline"; runId: string; step: number }
+  /** A background task (start_task): the helper reports to the bot that started it. */
+  | { kind: "parent"; botId: string }
 
 /** Work handed to a bot whose final reply is sent back to whoever asked. */
 export interface BotTask {

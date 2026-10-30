@@ -44,6 +44,7 @@ import {
   Settings03Icon as Settings,
   PanelLeft as SidebarLeft,
   StopIcon as Stop,
+  Task01Icon as Task,
   TeachingIcon as Teaching,
   Tick02Icon as Tick,
   ViewIcon as View,
@@ -124,6 +125,7 @@ export const PlusIcon = icon(Add, "PlusIcon")
 export const PowerIcon = icon(Power, "PowerIcon")
 export const SidebarSimpleIcon = icon(SidebarLeft, "SidebarSimpleIcon")
 export const StopIcon = icon(Stop, "StopIcon")
+export const TaskIcon = icon(Task, "TaskIcon")
 export const TerminalIcon = icon(Terminal, "TerminalIcon")
 export const TrashIcon = icon(Delete, "TrashIcon")
 export const WarningIcon = icon(Alert, "WarningIcon")

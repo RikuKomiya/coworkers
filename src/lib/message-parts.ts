@@ -221,6 +221,13 @@ export function toBlocks(message: UIMessage): Block[] {
       }
       return
     }
+    // The hand-off's reply is the bot's message, shown while the brief behind
+    // it is still streaming; the task itself shows in the strip above the composer.
+    if (call.name === "start_task") {
+      const reply = taskReply(call.input)
+      if (reply) blocks.push({ kind: "text", key, text: reply })
+      return
+    }
     // Bookkeeping the user does not need to see.
     if (call.name === "mark_reported" || call.name === "was_reported") return
 
@@ -264,6 +271,22 @@ export function toBlocks(message: UIMessage): Block[] {
     else blocks.push({ kind: "steps", key, calls: [call] })
   })
   return blocks
+}
+
+/** The acknowledgment a start_task call carries, once it has streamed in. */
+export function taskReply(input: unknown): string {
+  const reply = (input as { reply?: unknown } | null)?.reply
+  return typeof reply === "string" ? reply.trim() : ""
+}
+
+/** What the bot said in a message, in order: its text and its hand-off replies. */
+export function spokenTexts(message: UIMessage): string[] {
+  return message.parts.flatMap((part) => {
+    if (part.type === "text") return part.text.trim() ? [part.text] : []
+    const call = toToolCall(part)
+    const reply = call?.name === "start_task" ? taskReply(call.input) : ""
+    return reply ? [reply] : []
+  })
 }
 
 export function messageText(message: UIMessage) {
@@ -341,6 +364,12 @@ export function describeCall(call: ToolCall): string {
       return `Messaged ${str("to")}`
     case "delegate_task":
       return `Gave ${str("to")} a task`
+    case "start_task":
+      return `Started "${str("title")}" in the background`
+    case "update_task":
+      return "Updated a background task"
+    case "cancel_task":
+      return "Stopped a background task"
     case "attach_result_files":
       return "Attached files to the result"
     case "schedule_routine":
@@ -418,6 +447,9 @@ export function stepKind(call: ToolCall): StepKind {
       return "routine"
     case "message_bot":
     case "delegate_task":
+    case "start_task":
+    case "update_task":
+    case "cancel_task":
     case "attach_result_files":
       return "bot"
     case "save_app":

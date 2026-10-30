@@ -41,6 +41,7 @@ import type { AgentEmail } from "agents/email"
 import { jsonSchema, tool } from "ai"
 import type { JSONSchema7, ToolSet, UIMessage } from "ai"
 import PostalMime from "postal-mime"
+import { describeCall, spokenTexts } from "@/lib/message-parts"
 import { isModelId } from "@/lib/models"
 import type { ModelSettings } from "@/lib/models"
 import { z } from "zod"
@@ -50,12 +51,14 @@ import {
   NEW_BOT_NAME,
   NO_UPDATE,
   appPath,
+  botInstanceName,
 } from "@/lib/types"
 import type {
   ActionClass,
   AppCatalog,
   AppLink,
   ActivityEntry,
+  BackgroundTask,
   BotAppDetail,
   BotAttachment,
   BotAvatarKind,
@@ -98,6 +101,7 @@ import {
   checkInPrompt,
   crawlPrompt,
   emailPrompt,
+  helperBrief,
   routinePrompt,
   scriptPrompt,
   turnContext,
@@ -110,6 +114,16 @@ import type { BrowserNav, FrameResult, SeenTab } from "./browser-frame"
 import { finishTeachingCode, startTeachingCode } from "./teach"
 import type { TeachRecording, TeachSession } from "./teach"
 import type { UserHub } from "./user-hub"
+import {
+  HELPER_EXCLUDED_TOOLS,
+  backgroundTaskId,
+  handedOff,
+  helperBotId,
+  isBackgroundTaskId,
+  parentBotIdOf,
+  withTaskNotes,
+} from "./background-tasks"
+import type { TaskNote } from "./background-tasks"
 import { LoopGuard, shapeToolResults } from "./guards"
 import { MAX_MEMORY_CHARS, appendFact } from "./memory"
 import { languageModel, pickModel } from "./models"
@@ -230,6 +244,13 @@ const DAY_MS = 86_400_000
 const DELEGATION_STALE_MS = 3 * DAY_MS
 /** How much of a task's instructions a result message repeats back. */
 const TASK_ECHO_CHARS = 300
+/** How much of the chat a background task's helper reads. */
+const HELPER_CONVERSATION_MESSAGES = 20
+const HELPER_MESSAGE_CHARS = 2000
+/** A helper is deleted this long after it hands back its result. */
+const HELPER_TTL_S = 60 * 60
+/** A helper tells the bot what it is doing at most this often. */
+const HELPER_PROGRESS_MS = 2_000
 const MAX_FILE_PREVIEW_BYTES = 200_000
 const MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 const WORKSPACE_ROOT = "/workspace"
@@ -282,7 +303,22 @@ interface RoutinePayload {
   watch?: RoutineWatch
 }
 
-/** A task this bot handed to another bot (`delegate_task`). */
+/** What a helper copies from the bot that starts it (start_task). */
+type HelperConfig = Pick<
+  BotState,
+  "name" | "avatar" | "role" | "rules" | "proactive" | "skills"
+> & { model: string | null }
+
+/** The task a helper is working on, kept for its result and its teardown. */
+interface HelperTask {
+  id: string
+  title: string
+}
+
+/**
+ * A task this bot handed out: to another bot (`delegate_task`, `to_name` is
+ * that bot) or to a helper of its own (`start_task`, `to_name` is the title).
+ */
 interface DelegationRow {
   id: string
   to_name: string
@@ -378,9 +414,7 @@ const ROUTINE_REPORTED_IN_PROMPT = 60
 function textOf(message: UIMessage | undefined) {
   if (!message) return ""
   return (
-    message.parts
-      .filter((p) => p.type === "text")
-      .map((p) => p.text)
+    spokenTexts(message)
       .join(" ")
       // Previews are plain text: drop Markdown emphasis and code marks.
       .replace(/[`*_#>]+/g, "")
@@ -400,9 +434,7 @@ function metaOf(message: UIMessage | undefined): MessageMeta {
 
 /** The model may narrate before its tools run; the final text part decides. */
 function finalText(message: UIMessage) {
-  const parts = message.parts.filter((p) => p.type === "text" && p.text.trim())
-  const last = parts.at(-1)
-  return last?.type === "text" ? last.text : ""
+  return spokenTexts(message).at(-1) ?? ""
 }
 
 /** Models sometimes explain themselves before or after the token; it wins. */
@@ -615,6 +647,8 @@ export class BotAgent extends Think<Env, BotState> {
   /** In memory only: a restart ends any turn, and onStart resets status. */
   #turnActive = false
   #lastActivity = 0
+  /** A helper's last progress report to its bot, for throttling. */
+  #lastProgress = 0
 
   /** Apps this bot built, their links and their data. */
   private get apps(): AppStore {
@@ -640,6 +674,14 @@ export class BotAgent extends Think<Env, BotState> {
     return this.name.slice(this.name.lastIndexOf(":") + 1)
   }
 
+  /**
+   * Set on a helper: a BotAgent that runs one background task (start_task)
+   * for the bot with this id. Helpers are not in the user's bot directory.
+   */
+  private get parentBotId(): string | null {
+    return parentBotIdOf(this.botId)
+  }
+
   private hub() {
     // The binding is declared by Worker name in cloudflare.config.ts, so its
     // generated type does not carry the class.
@@ -655,6 +697,7 @@ export class BotAgent extends Think<Env, BotState> {
    * "idle" and leave the sidebar stuck on Typing.
    */
   private report(patch: Parameters<UserHub["reportBot"]>[1]) {
+    if (this.parentBotId) return this.#reports
     this.#reports = this.#reports.then(async () => {
       try {
         const hub = await this.hub()
@@ -674,7 +717,7 @@ export class BotAgent extends Think<Env, BotState> {
 
   /** Push to the user's devices, unless it is their quiet time. */
   private async notify(body: string) {
-    if (!body || inQuietHours(this.state.proactive)) return
+    if (!body || this.parentBotId || inQuietHours(this.state.proactive)) return
     try {
       const hub = await this.hub()
       await hub.notifyUser(this.botId, clip(body, 180))
@@ -913,6 +956,15 @@ export class BotAgent extends Think<Env, BotState> {
     )
   }
 
+  /**
+   * Nobody is there to approve: a background turn, or any turn of a helper
+   * (its thread is never shown). Helper turns are not marked background,
+   * since that would switch them to the background model and NO_UPDATE.
+   */
+  private unattended() {
+    return this.isBackgroundTurn() || this.parentBotId !== null
+  }
+
   private inbound(): BotInbound {
     const domain = this.env.EMAIL_DOMAIN?.trim()
     return {
@@ -1009,7 +1061,9 @@ export class BotAgent extends Think<Env, BotState> {
         await Promise.all([
           hub
             .listBots()
-            .then((bots) => bots.filter((b) => b.id !== this.botId)),
+            .then((bots) =>
+              bots.filter((b) => b.id !== (this.parentBotId ?? this.botId))
+            ),
           hub.appCatalog(),
           hub.appOrigin(),
           // In the per-turn context rather than a context block: it is fresh
@@ -1037,13 +1091,24 @@ export class BotAgent extends Think<Env, BotState> {
         .filter((t) => t.readOnly)
         .map((t) => appToolName(t.connectionId, t.name))
     )
+    const open = this.openDelegations()
     const context = turnContext(this.state, others, catalog.apps, {
       openItems: this.openItems(),
-      delegations: this.openDelegations().map((d) => ({
-        to: d.to_name,
-        task: clip(d.task, TASK_ECHO_CHARS),
-        at: d.created_at,
-      })),
+      delegations: open
+        .filter((d) => !isBackgroundTaskId(d.id))
+        .map((d) => ({
+          to: d.to_name,
+          task: clip(d.task, TASK_ECHO_CHARS),
+          at: d.created_at,
+        })),
+      backgroundTasks: open
+        .filter((d) => isBackgroundTaskId(d.id))
+        .map((d) => ({
+          id: d.id,
+          title: d.to_name,
+          task: clip(d.task, TASK_ECHO_CHARS),
+          at: d.created_at,
+        })),
       task: this.currentTask(),
       inbound: this.inbound(),
       sharedMemory,
@@ -1062,6 +1127,13 @@ export class BotAgent extends Think<Env, BotState> {
         this.state.proactive.timezone
       ),
       tools: this.#appTools,
+      stopWhen: handedOff,
+      // The user is waiting on chat turns, and their real work goes to
+      // start_task, whose helper still thinks. Workers AI only: other
+      // providers ignore it.
+      ...(this.unattended()
+        ? {}
+        : { providerOptions: { cloudflare: { reasoningEffort: null } } }),
     }
   }
 
@@ -1116,13 +1188,13 @@ export class BotAgent extends Think<Env, BotState> {
   }
 
   /**
-   * The user's rule for this call, adjusted for background turns: nobody is
+   * The user's rule for this call, adjusted for unattended turns: nobody is
    * there to approve, so "ask" becomes "block", while read-only app tools
    * run so the bot can look around (dots-style proactive research).
    */
   private decide(toolName: string): RulePolicy {
     const policy = this.policyFor(toolName)
-    if (policy === "block" || !this.isBackgroundTurn()) return policy
+    if (policy === "block" || !this.unattended()) return policy
     if (this.#readOnlyAppTools.has(toolName)) return "allow"
     if (
       this.#appToolNames.has(toolName) &&
@@ -1344,6 +1416,9 @@ export class BotAgent extends Think<Env, BotState> {
         ...def,
         needsApproval: async () => this.decide(name) === "ask",
       }
+    }
+    if (this.parentBotId) {
+      for (const name of HELPER_EXCLUDED_TOOLS) delete tools[name]
     }
     return tools
   }
@@ -1669,6 +1744,139 @@ export class BotAgent extends Think<Env, BotState> {
             note: "Its result arrives as a new message when it finishes. Do not wait or check on it.",
           }
         },
+      }),
+
+      start_task: tool({
+        description:
+          "Run a piece of work in the background, so the user can keep chatting. A helper with your tools, computer and browser does it and its result arrives later as a new message. Returns at once. For several independent pieces, call it once per piece in the same step.",
+        // Kept to a few words, so the call (and the reply in it, which the
+        // thread shows as the bot's message) streams in about a second. The
+        // helper reads the conversation instead of a brief written here.
+        inputSchema: z.object({
+          reply: z
+            .string()
+            .describe(
+              "Your reply to the user, shown as your message: one short, casual sentence in their language that you are on it, asking if there is anything else. When you start several tasks in one step, write it on the first call and leave it empty on the rest."
+            ),
+          title: z
+            .string()
+            .min(1)
+            .max(60)
+            .describe(
+              "What to do, as a short label the user sees while it runs, in their language, e.g. 'プロテインの価格比較'. The helper gets the conversation, so this only has to say which request it is."
+            ),
+          files: z
+            .array(z.string())
+            .max(MAX_BOT_FILES)
+            .optional()
+            .describe(
+              "Your own files it needs (paths under /workspace). They are copied to the helper's computer."
+            ),
+        }),
+        execute: async ({ title, files = [] }, { toolCallId }) => {
+          const hops =
+            (metaOf(this.messages.findLast((m) => m.role === "user")).hops ??
+              0) + 1
+          if (hops > MAX_BOT_HOPS) {
+            return {
+              started: false,
+              error: `This work has already passed through ${MAX_BOT_HOPS} bots. Do not hand it on again: finish it yourself or tell the user.`,
+            }
+          }
+          const attachments = await this.readAttachments(files)
+          if ("error" in attachments) {
+            return { started: false, error: attachments.error }
+          }
+          const taskId = backgroundTaskId(toolCallId)
+          const conversation = this.recentConversation()
+          const task = clip(
+            conversation.findLast((m) => m.role === "user")?.text ?? title,
+            TASK_ECHO_CHARS
+          )
+          this.sql`INSERT OR IGNORE INTO delegations
+            (id, to_name, task, created_at, status, hops, background)
+            VALUES (${taskId}, ${title}, ${task}, ${Date.now()}, 'open', ${hops},
+                    ${this.isBackgroundTurn() ? 1 : 0})`
+          // Listed before the helper starts: a quick helper can report back
+          // before this call returns.
+          this.syncTasks()
+          try {
+            const skills = await this.skillFiles()
+            const helper = await this.helper(taskId)
+            await helper.startHelperTask(
+              {
+                name: this.state.name,
+                avatar: this.state.avatar,
+                role: this.state.role,
+                rules: this.state.rules,
+                model: this.state.model ?? null,
+                proactive: this.state.proactive,
+                skills: skills.length ? this.state.skills : [],
+              },
+              {
+                id: taskId,
+                title,
+                text: helperBrief({
+                  title,
+                  conversation,
+                  memory: this.session.getContextBlock("memory")?.content ?? "",
+                }),
+                hops,
+                files: attachments.files,
+                skills,
+              }
+            )
+          } catch (err) {
+            console.error("Starting a background task failed", err)
+            this.sql`DELETE FROM delegations WHERE id = ${taskId}`
+            this.syncTasks()
+            return {
+              started: false,
+              error: "The background task could not be started. Try again.",
+            }
+          }
+          return {
+            started: true,
+            taskId,
+            note: "Running in the background. The result arrives as a new message; do not wait or check on it.",
+          }
+        },
+      }),
+
+      update_task: tool({
+        description:
+          "Add a correction or more detail to a background task that is still running, e.g. 'only Japanese brands'. The helper sees it at its next step.",
+        inputSchema: z.object({
+          taskId: z.string().describe("The id from start_task"),
+          message: z
+            .string()
+            .describe("What changes, written for the helper, self-contained"),
+        }),
+        execute: async ({ taskId, message }, { toolCallId }) => {
+          const row = this.backgroundTaskRow(taskId)
+          if (!row) return { updated: false, error: "No task with that id." }
+          if (row.status === "open") {
+            const helper = await this.helper(taskId)
+            if (
+              await helper.amendHelperTask({ key: toolCallId, text: message })
+            )
+              return { updated: true }
+          }
+          return {
+            updated: false,
+            error:
+              "That task has already finished or was stopped. Start a new task with the change instead.",
+          }
+        },
+      }),
+
+      cancel_task: tool({
+        description:
+          "Stop a background task the user no longer wants. Its result will not arrive.",
+        inputSchema: z.object({
+          taskId: z.string().describe("The id from start_task"),
+        }),
+        execute: async ({ taskId }) => this.cancelBackgroundTask(taskId),
       }),
 
       attach_result_files: tool({
@@ -2873,7 +3081,7 @@ export class BotAgent extends Think<Env, BotState> {
   /** decide() for an app call from a script, which has no tool name of its own. */
   private scriptAppPolicy(readOnly: boolean): RulePolicy {
     const policy = this.state.rules.apps
-    if (policy === "block" || !this.isBackgroundTurn()) return policy
+    if (policy === "block" || !this.unattended()) return policy
     if (readOnly || this.state.proactive.appsInBackground === true)
       return "allow"
     return policy === "ask" ? "block" : "allow"
@@ -3226,7 +3434,11 @@ export class BotAgent extends Think<Env, BotState> {
 
   /** Keep long turns inside the context window (see shapeToolResults). */
   override beforeStep(ctx: PrepareStepContext): StepConfig | void {
-    const messages = shapeToolResults(ctx.messages)
+    let messages = shapeToolResults(ctx.messages)
+    if (this.parentBotId) {
+      const notes = this.ctx.storage.kv.get<TaskNote[]>("task_notes") ?? []
+      messages = withTaskNotes(messages ?? ctx.messages, notes) ?? messages
+    }
     // Think's StepConfig is an Omit over a union, which drops `messages`
     // from the type; the AI SDK accepts it (and carries it forward).
     if (messages) return { messages } as StepConfig
@@ -3331,6 +3543,17 @@ export class BotAgent extends Think<Env, BotState> {
               ${ctx.success ? 1 : 0}, ${Math.round(ctx.durationMs)})`
     this
       .sql`DELETE FROM activity WHERE id <= (SELECT MAX(id) FROM activity) - 500`
+    if (this.parentBotId) {
+      this.sendProgress(
+        describeCall({
+          id: ctx.toolCallId,
+          name: ctx.toolName,
+          state: ctx.success ? "done" : "error",
+          input,
+          output: null,
+        })
+      )
+    }
   }
 
   /** The user-role message that started the turn `message` answers. */
@@ -3424,7 +3647,11 @@ export class BotAgent extends Think<Env, BotState> {
             ? `Needs your OK: ${preview}`
             : "Needs your OK to continue"
       )
-    } else if ((background || longTurn) && preview) {
+    } else if (
+      (background || longTurn || metaOf(trigger).taskResult) &&
+      preview
+    ) {
+      // A task result may land long after the user walked away.
       await this.notify(preview)
     }
   }
@@ -3502,6 +3729,8 @@ export class BotAgent extends Think<Env, BotState> {
     }
     // The hub is only a cache of this; heal it on every sweep.
     void this.report({ status: this.state.status })
+    // Tasks whose helper never reported back age out of the open list.
+    this.syncTasks()
 
     for (const message of this.messages) {
       if (message.role !== "assistant") continue
@@ -3878,8 +4107,35 @@ export class BotAgent extends Think<Env, BotState> {
       key: `result:${taskId}`,
       files: outcome.files,
     })
-    const lines = [`[Result from the ${origin.name} bot]`]
+    this.syncTasks()
+    const lines = [
+      origin.kind === "task"
+        ? `[Result of your background task: ${origin.name}]`
+        : `[Result from the ${origin.name} bot]`,
+    ]
     if (row) lines.push(`Your task: ${clip(row.task, TASK_ECHO_CHARS)}`)
+    if (row && origin.kind === "task") {
+      // By position, not time: the browser stamps the send time, and a
+      // message without one must not hide that the chat moved on.
+      const started = this.messages.findIndex((m) =>
+        m.parts.some(
+          (p) =>
+            p.type === "tool-start_task" &&
+            "toolCallId" in p &&
+            backgroundTaskId(p.toolCallId) === taskId
+        )
+      )
+      const movedOn =
+        started !== -1 &&
+        this.messages
+          .slice(started + 1)
+          .some((m) => m.role === "user" && !metaOf(m).origin)
+      lines.push(
+        movedOn
+          ? "The user has talked about other things since asking. Open with a few words saying which earlier request this answers, then give the result."
+          : "Nothing came up since the user asked. Give the result directly."
+      )
+    }
     if (outcome.status !== "done") {
       lines.push(
         `It did not finish (${outcome.status}${outcome.error ? `: ${outcome.error}` : ""}).`
@@ -3955,11 +4211,223 @@ export class BotAgent extends Think<Env, BotState> {
         : {}),
     }
     try {
-      const hub = await this.hub()
-      await hub.completeTask(this.botId, task, outcome)
+      if (task.replyTo.kind === "parent") {
+        const title =
+          this.ctx.storage.kv.get<HelperTask>("helper_task")?.title ?? "Task"
+        const parent = await this.bot(task.replyTo.botId)
+        await parent.receiveTaskResult(
+          { kind: "task", name: title },
+          task.id,
+          outcome
+        )
+      } else {
+        const hub = await this.hub()
+        await hub.completeTask(this.botId, task, outcome)
+      }
     } catch (err) {
       console.error("Reporting a task result failed", err)
     }
+    if (task.replyTo.kind === "parent") await this.scheduleTeardown()
+  }
+
+  // ── Background tasks (start_task) ───────────────────────────────────
+
+  /** Another BotAgent of this user, by bot id (helpers included). */
+  private bot(botId: string) {
+    return getAgentByName(
+      this.env.BotAgent as unknown as DurableObjectNamespace<BotAgent>,
+      botInstanceName(this.userId, botId)
+    )
+  }
+
+  private helper(taskId: string) {
+    return this.bot(helperBotId(this.botId, taskId))
+  }
+
+  private backgroundTaskRow(taskId: string): DelegationRow | undefined {
+    if (!isBackgroundTaskId(taskId)) return undefined
+    return this.sql<DelegationRow>`SELECT * FROM delegations
+      WHERE id = ${taskId}`[0]
+  }
+
+  /** `state.tasks` mirrors the open start_task rows, keeping each one's step. */
+  private syncTasks() {
+    const steps = new Map((this.state.tasks ?? []).map((t) => [t.id, t.step]))
+    const tasks: BackgroundTask[] = this.openDelegations()
+      .filter((d) => isBackgroundTaskId(d.id))
+      .map((d) => {
+        const step = steps.get(d.id)
+        return {
+          id: d.id,
+          title: d.to_name,
+          startedAt: d.created_at,
+          ...(step ? { step } : {}),
+        }
+      })
+    if (JSON.stringify(tasks) === JSON.stringify(this.state.tasks ?? [])) {
+      return
+    }
+    this.setState({ ...this.state, tasks })
+  }
+
+  /** The bot's skill files, so a helper can follow them too. All or none. */
+  /** The chat so far, as a background task's helper reads it. */
+  private recentConversation() {
+    return this.messages
+      .filter((m) =>
+        m.role === "user" ? !metaOf(m).origin : m.role === "assistant"
+      )
+      .slice(-HELPER_CONVERSATION_MESSAGES)
+      .map((m) => ({
+        role: m.role as "user" | "assistant",
+        text: clip(
+          m.role === "user" ? textOf(m) : spokenTexts(m).join("\n"),
+          HELPER_MESSAGE_CHARS
+        ),
+      }))
+      .filter((m) => m.text)
+  }
+
+  private async skillFiles(): Promise<BotAttachment[]> {
+    const read = await this.readAttachments(
+      this.state.skills.map((s) => `skills/${s.slug}.md`)
+    )
+    return "files" in read ? read.files : []
+  }
+
+  private async cancelBackgroundTask(taskId: string) {
+    const row = this.backgroundTaskRow(taskId)
+    if (!row) return { cancelled: false, error: "No task with that id." }
+    if (row.status !== "open") {
+      return {
+        cancelled: false,
+        error: "That task already finished or was stopped.",
+      }
+    }
+    // Closed first: a result that still arrives is dropped (receiveTaskResult).
+    this.sql`UPDATE delegations SET status = 'stopped',
+      finished_at = ${Date.now()} WHERE id = ${taskId}`
+    this.syncTasks()
+    try {
+      const helper = await this.helper(taskId)
+      await helper.cancelHelperTask()
+    } catch (err) {
+      console.error("Stopping a background task failed", err)
+    }
+    return { cancelled: true }
+  }
+
+  /** The stop button on a running task. */
+  @callable()
+  async cancelTask(taskId: string) {
+    await this.cancelBackgroundTask(taskId)
+  }
+
+  /** Durable Object RPC from a helper: what it is doing now, for the UI. */
+  helperProgress(taskId: string, step: string) {
+    const tasks = this.state.tasks ?? []
+    if (!tasks.some((t) => t.id === taskId)) return
+    this.setState({
+      ...this.state,
+      tasks: tasks.map((t) => (t.id === taskId ? { ...t, step } : t)),
+    })
+  }
+
+  /**
+   * Durable Object RPC from the bot that started this helper. Safe to
+   * deliver twice: the turn is keyed on the task, the files overwrite.
+   */
+  async startHelperTask(
+    config: HelperConfig,
+    task: HelperTask & {
+      text: string
+      hops: number
+      files: BotAttachment[]
+      skills: BotAttachment[]
+    }
+  ) {
+    const parent = this.parentBotId
+    if (!parent) throw new Error("Only a helper runs background tasks.")
+    this.ctx.storage.kv.put<HelperTask>("helper_task", {
+      id: task.id,
+      title: task.title,
+    })
+    for (const file of task.skills) {
+      await this.saveFile(`skills/${file.name}`, file.bytes)
+    }
+    // No check-ins: a helper only ever works on its one task.
+    this.setState({
+      ...this.state,
+      ...config,
+      proactive: { ...config.proactive, enabled: false },
+    })
+    await this.internal_reconcileScheduledTasks()
+    await this.receiveTask({ kind: "task", name: task.title }, task.text, {
+      task: { id: task.id, replyTo: { kind: "parent", botId: parent } },
+      key: `task:${parent}:${task.id}`,
+      hops: task.hops,
+      files: task.files,
+    })
+  }
+
+  /** Durable Object RPC from the bot that started this helper: stop the task. */
+  async cancelHelperTask() {
+    // A turn still queued is not in flight yet, so cancelAllChats misses it.
+    const queued = await this.listSubmissions({
+      status: ["pending", "running"],
+    })
+    for (const submission of queued) {
+      await this.cancelSubmission(
+        submission.submissionId,
+        "Stopped by the user"
+      )
+    }
+    this.cancelAllChats()
+    await this.scheduleTeardown()
+  }
+
+  /**
+   * Durable Object RPC from the bot that started this helper: a correction
+   * for the running task, shown to the model from its next step (beforeStep).
+   * False once the task has ended, so the bot starts a new one instead.
+   */
+  amendHelperTask(note: TaskNote): boolean {
+    const task = this.ctx.storage.kv.get<HelperTask>("helper_task")
+    if (!task || this.ctx.storage.kv.get(`task_done:${task.id}`) !== undefined)
+      return false
+    const notes = this.ctx.storage.kv.get<TaskNote[]>("task_notes") ?? []
+    if (!notes.some((n) => n.key === note.key)) {
+      this.ctx.storage.kv.put("task_notes", [...notes, note])
+    }
+    return true
+  }
+
+  /** Best effort: progress is only for the UI and must never fail a step. */
+  private sendProgress(step: string) {
+    const parent = this.parentBotId
+    const task = this.ctx.storage.kv.get<HelperTask>("helper_task")
+    if (
+      !parent ||
+      !task ||
+      Date.now() - this.#lastProgress < HELPER_PROGRESS_MS
+    )
+      return
+    this.#lastProgress = Date.now()
+    void this.bot(parent)
+      .then((bot) => bot.helperProgress(task.id, clip(step, 120)))
+      .catch((err) => console.error("Reporting task progress failed", err))
+  }
+
+  private async scheduleTeardown() {
+    if (this.getSchedules().some((s) => s.callback === "teardownHelper")) return
+    await this.schedule(HELPER_TTL_S, "teardownHelper")
+  }
+
+  /** Schedule callback: a helper is done, so free its browser and storage. */
+  async teardownHelper() {
+    if (!this.parentBotId) return
+    await this.browser.connector.closeSession().catch(() => undefined)
+    await this.destroy()
   }
 
   /**
