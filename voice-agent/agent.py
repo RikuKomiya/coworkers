@@ -257,7 +257,8 @@ async def entrypoint(ctx: JobContext) -> None:
     session.on("user_input_transcribed", on_transcribed)
     session.on("close", on_close)
     # Started first: `ready` may carry a greeting, and say() needs a running session.
-    await session.start(agent, room=ctx.room)
+    # The spec keeps call audio out of storage; LiveKit records by default.
+    await session.start(agent, room=ctx.room, record=False)
 
     runner = asyncio.create_task(link.run())
 
