@@ -38,13 +38,13 @@ uv run agent.py download-files   # silero VAD and turn detector weights
 | Variable                                             | Purpose                                                                    |
 | ---------------------------------------------------- | -------------------------------------------------------------------------- |
 | `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | The LiveKit project. Use the same values as the app's `.dev.vars`.         |
-| `VOICE_STT`                                          | `deepgram` (default) or `openai`.                                          |
-| `VOICE_STT_MODEL`                                    | Defaults to `nova-3` (Deepgram) or `gpt-4o-transcribe` (OpenAI).           |
-| `VOICE_STT_LANGUAGE`                                 | Defaults to `multi` (Deepgram) or `ja` (OpenAI).                           |
-| `VOICE_TTS`                                          | `elevenlabs` (default), `openai` or `cartesia`.                            |
-| `VOICE_TTS_MODEL`                                    | Defaults to `eleven_flash_v2_5`, `gpt-4o-mini-tts` or `sonic-3`.           |
+| `VOICE_STT`                                          | `inference` (default, LiveKit Inference), `deepgram` or `openai`.          |
+| `VOICE_STT_MODEL`                                    | Defaults to `deepgram/nova-3` (Inference), `nova-3` or `gpt-4o-transcribe`. |
+| `VOICE_STT_LANGUAGE`                                 | Defaults to `multi` (Inference, Deepgram) or `ja` (OpenAI).                |
+| `VOICE_TTS`                                          | `inference` (default), `elevenlabs`, `openai` or `cartesia`.               |
+| `VOICE_TTS_MODEL`                                    | Defaults to `cartesia/sonic-3` (Inference), `eleven_flash_v2_5`, `gpt-4o-mini-tts` or `sonic-3`. |
 | `VOICE_TTS_VOICE`                                    | Voice ID for the chosen provider. A bot's `ttsVoice` overrides it per call. |
-| `VOICE_TTS_LANGUAGE`                                 | Cartesia only. Defaults to `ja`.                                           |
+| `VOICE_TTS_LANGUAGE`                                 | Inference and Cartesia. Defaults to `ja`.                                  |
 | `DEEPGRAM_API_KEY`                                   | When `VOICE_STT=deepgram`.                                                 |
 | `OPENAI_API_KEY`                                     | When either provider is `openai`.                                          |
 | `ELEVEN_API_KEY`                                     | When `VOICE_TTS=elevenlabs`.                                               |

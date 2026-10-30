@@ -45,6 +45,11 @@ def _env(name: str, default: str) -> str:
 
 
 STT_PROVIDERS: dict[str, Callable[[], object]] = {
+    # LiveKit Inference bills the LiveKit project, so it needs no other key.
+    "inference": lambda: inference.STT(
+        model=_env("VOICE_STT_MODEL", "deepgram/nova-3"),
+        language=_env("VOICE_STT_LANGUAGE", "multi"),
+    ),
     "deepgram": lambda: deepgram.STT(
         model=_env("VOICE_STT_MODEL", "nova-3"), language=_env("VOICE_STT_LANGUAGE", "multi")
     ),
@@ -56,6 +61,14 @@ STT_PROVIDERS: dict[str, Callable[[], object]] = {
 
 # provider -> (factory, name of the voice option in its update_options)
 TTS_PROVIDERS: dict[str, tuple[Callable[[], object], str]] = {
+    "inference": (
+        lambda: inference.TTS(
+            model=_env("VOICE_TTS_MODEL", "cartesia/sonic-3"),
+            language=_env("VOICE_TTS_LANGUAGE", "ja"),
+            **({"voice": v} if (v := os.environ.get("VOICE_TTS_VOICE")) else {}),
+        ),
+        "voice",
+    ),
     "elevenlabs": (
         lambda: elevenlabs.TTS(
             model=_env("VOICE_TTS_MODEL", "eleven_flash_v2_5"),
@@ -197,10 +210,10 @@ async def entrypoint(ctx: JobContext) -> None:
     await ctx.connect()
     participant = await ctx.wait_for_participant()
 
-    tts_factory, voice_option = TTS_PROVIDERS[_env("VOICE_TTS", "elevenlabs")]
+    tts_factory, voice_option = TTS_PROVIDERS[_env("VOICE_TTS", "inference")]
     tts = tts_factory()
     session = AgentSession(
-        stt=STT_PROVIDERS[_env("VOICE_STT", "deepgram")](),
+        stt=STT_PROVIDERS[_env("VOICE_STT", "inference")](),
         tts=tts,
         llm=NoLLM(),
         vad=ctx.proc.userdata["vad"],
