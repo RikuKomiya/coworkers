@@ -17,6 +17,7 @@ import {
   CrawlIcon,
   EnvelopeSimpleIcon,
   PipelineIcon,
+  TaskIcon,
   TerminalIcon,
   WebhooksLogoIcon,
 } from "@/components/icons"
@@ -632,7 +633,8 @@ function UserMessage({ message }: { message: UIMessage }) {
     origin?.kind === "webhook" ||
     origin?.kind === "app" ||
     origin?.kind === "crawl" ||
-    origin?.kind === "script"
+    origin?.kind === "script" ||
+    origin?.kind === "task"
   ) {
     const [Icon, label] =
       origin.kind === "routine"
@@ -645,7 +647,10 @@ function UserMessage({ message }: { message: UIMessage }) {
               ? [CrawlIcon, `Crawl finished · ${origin.name}`]
               : origin.kind === "script"
                 ? [TerminalIcon, `Script finished · ${origin.name}`]
-                : [WebhooksLogoIcon, `Webhook · ${origin.name}`]
+                : origin.kind === "task"
+                  ? // Neutral on purpose: a failed task lands here too.
+                    [TaskIcon, `Background task · ${origin.name}`]
+                  : [WebhooksLogoIcon, `Webhook · ${origin.name}`]
     return (
       <SystemEvent>
         <span className="inline-flex max-w-full items-center gap-1.5 align-middle">

@@ -30,6 +30,7 @@ import { SettingsPanel } from "@/components/settings-panel"
 import { SidePanel } from "@/components/side-panel"
 import { useLatchedWhileClosing } from "@/components/slide-shell"
 import { SplitView } from "@/components/split-view"
+import { TaskStrip } from "@/components/task-strip"
 import { Thread } from "@/components/thread"
 import { BotContext } from "@/lib/bot-context"
 import { useHub } from "@/lib/hub-context"
@@ -331,6 +332,11 @@ function LiveBot({
     [agent]
   )
 
+  const onStopTask = useCallback(
+    (taskId: string) => agent.stub.cancelTask(taskId),
+    [agent]
+  )
+
   const onAttach = useCallback(
     async (file: File) => {
       const bytes = new Uint8Array(await file.arrayBuffer())
@@ -369,6 +375,7 @@ function LiveBot({
             "Something went wrong. Try sending that again."}
         </p>
       ) : null}
+      <TaskStrip tasks={state.tasks ?? []} onStop={onStopTask} />
       <Composer
         botName={state.name}
         busy={busy}
