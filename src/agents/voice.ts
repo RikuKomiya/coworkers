@@ -207,6 +207,8 @@ export interface VoiceTurnState {
   announced: string[]
   taskIds: string[]
   needsScreen: boolean
+  /** Text already went out, so start_task's reply would say it twice. */
+  spoke: boolean
   ended: boolean
 }
 
@@ -217,6 +219,7 @@ export function voiceTurn(turnId: string): VoiceTurnState {
     announced: [],
     taskIds: [],
     needsScreen: false,
+    spoke: false,
     ended: false,
   }
 }
@@ -259,7 +262,11 @@ function chunkFrames(
       if (typeof chunk.delta !== "string") break
       const next = speakable(state.speech, chunk.delta)
       return {
-        state: { ...state, speech: next.state },
+        state: {
+          ...state,
+          speech: next.state,
+          spoke: state.spoke || !!next.text.trim(),
+        },
         frames: next.text ? [{ type: "delta", turnId, text: next.text }] : [],
       }
     }
@@ -274,13 +281,18 @@ function chunkFrames(
           : {}
       if (name === "start_task") {
         // The instant acknowledgment rides in the tool input, not in text.
+        // Models sometimes also acknowledge in text; say it once.
         const reply = typeof input.reply === "string" ? input.reply.trim() : ""
-        const spoken = reply ? speakable(INITIAL_SPEECH, reply, true).text : ""
+        const spoken =
+          reply && !state.spoke
+            ? speakable(INITIAL_SPEECH, reply, true).text
+            : ""
         return {
           state: {
             ...state,
             announced,
             taskIds: [...state.taskIds, backgroundTaskId(id)],
+            spoke: state.spoke || !!spoken.trim(),
           },
           frames: spoken ? [{ type: "delta", turnId, text: spoken }] : [],
         }
@@ -332,6 +344,26 @@ export function toVoiceFrames(
   return { state: { ...state, ended: true }, frames: endFrames(state, status) }
 }
 
+/** Lines that start a block meant for the screen: a table, list, heading or code. */
+const SCREEN_BLOCK = /^\s*(\||[-*+]\s|\d+[.)]\s|#|```|~~~)/
+
+/**
+ * What to say out loud of a finished reply that was not streamed to the
+ * call: its opening prose, up to two sentences. The rest stays in the chat.
+ */
+export function spokenLead(markdown: string, maxSentences = 2) {
+  const lead: string[] = []
+  for (const line of markdown.trim().split("\n")) {
+    if (SCREEN_BLOCK.test(line)) break
+    lead.push(line)
+  }
+  const text = speakable(INITIAL_SPEECH, lead.join("\n"), true)
+    .text.replace(/\s+/g, " ")
+    .trim()
+  const sentences = text.match(/[^.!?。！？]+[.!?。！？]*/g) ?? []
+  return sentences.slice(0, maxSentences).join("").trim()
+}
+
 // ── What the call bar shows ───────────────────────────────────────────
 
 /** Moves the call bar's status on each frame in or out of the call. */
@@ -380,7 +412,7 @@ const linkSchema = z.object({
 
 const encoder = new TextEncoder()
 
-function base64url(bytes: Uint8Array) {
+export function base64url(bytes: Uint8Array) {
   let binary = ""
   for (const b of bytes) binary += String.fromCharCode(b)
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
@@ -466,4 +498,29 @@ export function linkMatches(
   path: { userId: string; botId: string }
 ) {
   return link.userId === path.userId && link.botId === path.botId
+}
+
+// ── Call setup ────────────────────────────────────────────────────────
+
+/** Time zones whose speakers are unlikely to want English by default. */
+const ZONE_LANGUAGES: Record<string, string> = {
+  "Asia/Tokyo": "ja",
+  "Asia/Seoul": "ko",
+  "Asia/Shanghai": "zh",
+  "Asia/Taipei": "zh",
+  "Europe/Berlin": "de",
+  "Europe/Paris": "fr",
+  "Europe/Madrid": "es",
+}
+
+/** The call's language: what the user last spoke, else a guess from their time zone. */
+export function callLanguage(spoken: string | undefined, timezone: string) {
+  return spoken || ZONE_LANGUAGES[timezone] || "en"
+}
+
+/** What the bot says when it picks up, before the user has said anything. */
+export function greetingFor(language: string, botName: string) {
+  return language === "ja"
+    ? `${botName}です。どうしましたか？`
+    : `Hi, it's ${botName}. What's up?`
 }

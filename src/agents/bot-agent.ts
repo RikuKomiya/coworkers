@@ -20,6 +20,7 @@ import { createAITools } from "@cloudflare/computer/tools/ai-sdk"
 import { Think } from "@cloudflare/think"
 import type {
   ChatResponseResult,
+  ThinkChannels,
   ThinkIntervalSchedule,
   PrepareStepContext,
   StepConfig,
@@ -34,6 +35,7 @@ import { createBrowserRuntime } from "@cloudflare/think/tools/browser"
 import type { BrowserRuntime } from "@cloudflare/think/tools/browser"
 import { exports } from "cloudflare:workers"
 import { callable, getAgentByName } from "agents"
+import type { Connection, ConnectionContext, WSMessage } from "agents"
 import { CHAT_MESSAGE_TYPES } from "agents/chat"
 import type { ContextConfig } from "agents/context"
 import { isAutoReplyEmail } from "agents/email"
@@ -97,6 +99,7 @@ import type {
 import {
   GREETING,
   SOUL,
+  VOICE_INSTRUCTIONS,
   appEventPrompt,
   checkInPrompt,
   crawlPrompt,
@@ -116,6 +119,7 @@ import type { TeachRecording, TeachSession } from "./teach"
 import type { UserHub } from "./user-hub"
 import {
   HELPER_EXCLUDED_TOOLS,
+  VOICE_EXCLUDED_TOOLS,
   backgroundTaskId,
   handedOff,
   helperBotId,
@@ -136,6 +140,19 @@ import {
   validSecretName,
 } from "./secrets"
 import type { SecretMeta, SecretScheme } from "./secrets"
+import {
+  VOICE_CALL_HEADER,
+  VOICE_PROTOCOL_VERSION,
+  VOICE_TAG,
+  callLanguage,
+  greetingFor,
+  nextVoiceView,
+  parseAgentFrame,
+  spokenLead,
+  toVoiceFrames,
+  voiceTurn,
+} from "./voice"
+import type { AgentFrame, DoFrame, TurnEvent } from "./voice"
 import { createWebTools } from "./web-tools"
 import type { CrawlInput, QuickEngine } from "./web-tools"
 
@@ -410,6 +427,33 @@ const MAX_BROWSER_FRAMES = 60
 /** A step waits this long for its frame before the card is marked done. */
 const FRAME_TIMEOUT_MS = 8_000
 const ROUTINE_REPORTED_IN_PROMPT = 60
+/** A call whose agent has not pinged for this long is over. */
+const VOICE_IDLE_MS = 60_000
+const VOICE_WATCHDOG_S = 30
+/** Few steps: anything longer belongs in start_task. */
+const VOICE_MAX_STEPS = 6
+
+interface VoiceTurnRun {
+  callId: string
+  turnId: string
+  /** Think's id for the turn, to tell its onChatResponse from other turns'. */
+  requestId?: string
+  abort: AbortController
+}
+
+interface VoiceCallRow {
+  id: string
+  started_at: number
+  ended_at: number | null
+  end_reason: string | null
+  turns: number
+}
+
+/** The call a voice connection belongs to, from the header the Worker set. */
+function voiceCallOf(connection: Connection): string | null {
+  const state = connection.state as { voiceCallId?: unknown } | null
+  return typeof state?.voiceCallId === "string" ? state.voiceCallId : null
+}
 
 function textOf(message: UIMessage | undefined) {
   if (!message) return ""
@@ -646,6 +690,10 @@ export class BotAgent extends Think<Env, BotState> {
   >()
   /** In memory only: a restart ends any turn, and onStart resets status. */
   #turnActive = false
+  /** The voice turn streaming now: the next user turn or a barge-in aborts it. */
+  #voiceTurn: VoiceTurnRun | null = null
+  /** `say` frames that wait for the running voice turn to end. */
+  #heldSays: DoFrame[] = []
   #lastActivity = 0
   /** A helper's last progress report to its bot, for throttling. */
   #lastProgress = 0
@@ -824,6 +872,14 @@ export class BotAgent extends Think<Env, BotState> {
       finished_at INTEGER,
       status TEXT NOT NULL,
       background INTEGER NOT NULL
+    )`
+    // Voice calls, so a link token cannot reopen a call that ended.
+    this.sql`CREATE TABLE IF NOT EXISTS voice_calls (
+      id TEXT PRIMARY KEY,
+      started_at INTEGER NOT NULL,
+      ended_at INTEGER,
+      end_reason TEXT,
+      turns INTEGER NOT NULL DEFAULT 0
     )`
     this.apps.init()
     // Bots created before proactive work, skills or apps existed.
@@ -1050,7 +1106,13 @@ export class BotAgent extends Think<Env, BotState> {
 
   override async beforeTurn(ctx: TurnContext): Promise<TurnConfig> {
     await this.setStatus("thinking")
-    const system = (await this.refreshSoulIfChanged()) ?? ctx.system
+    const refreshed = await this.refreshSoulIfChanged()
+    // ctx.system already has the channel's instructions; a rebuilt one does not.
+    const system = refreshed
+      ? this.activeChannel?.channelId === "voice"
+        ? `${VOICE_INSTRUCTIONS}\n\n${refreshed}`
+        : refreshed
+      : ctx.system
     let others: Awaited<ReturnType<UserHub["listBots"]>> = []
     let catalog: AppCatalog = { apps: [], tools: [] }
     let sharedMemory = ""
@@ -3579,6 +3641,20 @@ export class BotAgent extends Think<Env, BotState> {
     const status: BotStatus =
       waiting || this.state.scriptApprovals?.length ? "action_needed" : "idle"
     if (waiting) this.noteApprovalsAsked(result.message)
+    // Voice turns stream as they go; anything else on the voice channel (a
+    // task result, an approval answered later) is said once it is done.
+    if (
+      this.state.voice &&
+      metaOf(trigger).channel === "voice" &&
+      result.requestId !== this.#voiceTurn?.requestId &&
+      result.status === "completed" &&
+      !waiting
+    ) {
+      this.sayOnCall(
+        spokenLead(finalText(result.message)),
+        metaOf(trigger).taskResult ? "task_result" : "notice"
+      )
+    }
     const task = metaOf(trigger).task
     // An approval card keeps the turn open; the result goes back once the
     // continuation finishes.
@@ -4009,6 +4085,358 @@ export class BotAgent extends Think<Env, BotState> {
     )
   }
 
+  // ── Voice calls ─────────────────────────────────────────────────────
+
+  override configureChannels(): ThinkChannels {
+    return {
+      voice: {
+        kind: "voice",
+        ingress: { transport: "voice" },
+        instructions: VOICE_INSTRUCTIONS,
+        tools: (all) =>
+          Object.fromEntries(
+            Object.entries(all).filter(
+              ([name]) => !VOICE_EXCLUDED_TOOLS.has(name)
+            )
+          ),
+        maxTurns: VOICE_MAX_STEPS,
+      },
+    }
+  }
+
+  override getConnectionTags(_connection: Connection, ctx: ConnectionContext) {
+    return ctx.request.headers.has(VOICE_CALL_HEADER) ? [VOICE_TAG] : []
+  }
+
+  /** The LiveKit agent speaks the voice protocol, not chat and state sync. */
+  override shouldSendProtocolMessages(
+    _connection: Connection,
+    ctx: ConnectionContext
+  ) {
+    return !ctx.request.headers.has(VOICE_CALL_HEADER)
+  }
+
+  override async onConnect(connection: Connection, ctx: ConnectionContext) {
+    const callId = ctx.request.headers.get(VOICE_CALL_HEADER)
+    if (!callId) return super.onConnect(connection, ctx)
+    connection.setState({ voiceCallId: callId })
+  }
+
+  override async onMessage(connection: Connection, message: WSMessage) {
+    const callId = voiceCallOf(connection)
+    if (!callId) return super.onMessage(connection, message)
+    const frame = typeof message === "string" ? parseAgentFrame(message) : null
+    if (!frame) {
+      this.sendTo(connection, {
+        type: "error",
+        code: "bad_frame",
+        message: "Not a voice protocol frame.",
+      })
+      return
+    }
+    await this.onVoiceFrame(connection, callId, frame)
+  }
+
+  /** Chat frames and state go to browsers only; the call has its own protocol. */
+  override broadcast(
+    message: string | ArrayBuffer | ArrayBufferView,
+    without?: string[]
+  ) {
+    const voice = [...this.getConnections(VOICE_TAG)].map((c) => c.id)
+    super.broadcast(
+      message,
+      voice.length ? [...(without ?? []), ...voice] : without
+    )
+  }
+
+  /** Durable Object RPC from `startVoiceCall`: a call is about to connect. */
+  async beginVoiceCall(callId: string) {
+    this.sql`INSERT OR IGNORE INTO voice_calls (id, started_at)
+      VALUES (${callId}, ${Date.now()})`
+  }
+
+  private callEnded(callId: string) {
+    return (
+      this.sql<VoiceCallRow>`SELECT * FROM voice_calls
+      WHERE id = ${callId} AND ended_at IS NOT NULL`.length > 0
+    )
+  }
+
+  private sendTo(connection: Connection, frame: DoFrame) {
+    try {
+      connection.send(JSON.stringify(frame))
+    } catch (err) {
+      console.error("Sending a voice frame failed", err)
+    }
+  }
+
+  /**
+   * Send to the call's connection as it is now, so a reconnect mid-turn
+   * keeps receiving the turn, and move the call bar along.
+   */
+  private sendVoice(callId: string, frame: DoFrame) {
+    for (const connection of this.getConnections(VOICE_TAG)) {
+      if (voiceCallOf(connection) === callId) this.sendTo(connection, frame)
+    }
+    this.moveVoiceView(callId, frame)
+  }
+
+  private moveVoiceView(callId: string, frame: AgentFrame | DoFrame) {
+    const view = this.state.voice
+    if (view?.callId !== callId) return
+    const next = nextVoiceView(view, frame)
+    if (next.status !== view.status || next.partial !== view.partial) {
+      this.setState({ ...this.state, voice: next })
+    }
+  }
+
+  private async onVoiceFrame(
+    connection: Connection,
+    callId: string,
+    frame: AgentFrame
+  ) {
+    if (
+      frame.type !== "hello" &&
+      frame.type !== "ping" &&
+      this.state.voice?.callId !== callId
+    ) {
+      this.sendTo(connection, {
+        type: "error",
+        code: "no_call",
+        message: "Send hello first.",
+      })
+      return
+    }
+    switch (frame.type) {
+      case "hello":
+        return this.voiceHello(connection, callId, frame)
+      case "ping":
+        this.ctx.storage.kv.put(`voice_ping:${callId}`, Date.now())
+        this.sendTo(connection, { type: "pong" })
+        return
+      case "user_partial":
+        this.moveVoiceView(callId, frame)
+        return
+      case "user_turn":
+        this.moveVoiceView(callId, frame)
+        if (frame.language) {
+          this.ctx.storage.kv.put("voice_language", frame.language)
+        }
+        this.sql`UPDATE voice_calls SET turns = turns + 1 WHERE id = ${callId}`
+        void this.runVoiceTurn(callId, frame)
+        return
+      case "interrupt": {
+        const running = this.#voiceTurn
+        if (running?.turnId === frame.turnId) running.abort.abort()
+        this.moveVoiceView(callId, frame)
+        // A running turn records it once its reply is saved.
+        if (running?.turnId !== frame.turnId) {
+          await this.recordSpoken(callId, frame.turnId, frame.spokenText)
+        } else {
+          this.#spoken.set(frame.turnId, frame.spokenText)
+        }
+        return
+      }
+      case "playback_done":
+        // A late one must not drop a turn that is thinking back to listening.
+        if (!this.#voiceTurn) this.moveVoiceView(callId, frame)
+        return
+      case "call_end":
+        await this.endVoiceCall(callId, frame.reason)
+        return
+    }
+  }
+
+  /** What the user heard of a reply they talked over, until it is saved. */
+  #spoken = new Map<string, string>()
+
+  private async voiceHello(
+    connection: Connection,
+    callId: string,
+    frame: Extract<AgentFrame, { type: "hello" }>
+  ) {
+    if (this.callEnded(callId)) {
+      this.sendTo(connection, {
+        type: "error",
+        code: "call_ended",
+        message: "This call has ended.",
+      })
+      connection.close(4410, "Call ended")
+      return
+    }
+    // One call per bot, one socket per call: the newest wins.
+    for (const other of this.getConnections(VOICE_TAG)) {
+      if (other.id === connection.id) continue
+      const otherCall = voiceCallOf(other)
+      if (otherCall && otherCall !== callId) {
+        await this.endVoiceCall(otherCall, "replaced")
+      }
+      other.close(4409, "Replaced by a newer connection")
+    }
+    // The Worker verified the link token, so a call startVoiceCall did not
+    // get to record yet is still this user's.
+    await this.beginVoiceCall(callId)
+    const fresh = this.state.voice?.callId !== callId
+    if (fresh) {
+      this.setState({
+        ...this.state,
+        voice: { callId, status: "listening", partial: "" },
+      })
+    }
+    this.ctx.storage.kv.put(`voice_ping:${callId}`, Date.now())
+    if (!this.getSchedules().some((s) => s.callback === "voiceWatchdog")) {
+      await this.schedule(VOICE_WATCHDOG_S, "voiceWatchdog")
+    }
+    const language = callLanguage(
+      this.ctx.storage.kv.get<string>("voice_language"),
+      this.state.proactive.timezone
+    )
+    const running = this.#voiceTurn?.callId === callId ? this.#voiceTurn : null
+    this.sendTo(connection, {
+      type: "ready",
+      v: VOICE_PROTOCOL_VERSION,
+      botName: this.state.name,
+      language,
+      ...(fresh ? { greeting: greetingFor(language, this.state.name) } : {}),
+      ...(running ? { activeTurnId: running.turnId } : {}),
+    })
+    console.log(`Voice call ${callId} connected from room ${frame.room}`)
+    this.flushSays(callId)
+  }
+
+  private async runVoiceTurn(
+    callId: string,
+    frame: Extract<AgentFrame, { type: "user_turn" }>
+  ) {
+    this.#voiceTurn?.abort.abort()
+    const turn: VoiceTurnRun = {
+      callId,
+      turnId: frame.turnId,
+      abort: new AbortController(),
+    }
+    this.#voiceTurn = turn
+    let state = voiceTurn(frame.turnId)
+    const emit = (event: TurnEvent) => {
+      const next = toVoiceFrames(state, event)
+      state = next.state
+      for (const out of next.frames) this.sendVoice(callId, out)
+    }
+    try {
+      await this.runTurn({
+        mode: "stream",
+        channel: "voice",
+        signal: turn.abort.signal,
+        input: {
+          id: `voice:${callId}:${frame.turnId}`,
+          role: "user",
+          parts: [{ type: "text", text: frame.text }],
+          metadata: {
+            at: frame.endedAt,
+            via: "voice",
+            callId,
+          } satisfies MessageMeta,
+        },
+        callback: {
+          onStart: ({ requestId }) => {
+            turn.requestId = requestId
+          },
+          onEvent: (json) => emit({ type: "chunk", chunk: JSON.parse(json) }),
+          onDone: () => emit({ type: "done" }),
+          onError: () => emit({ type: "error" }),
+          // A recovered continuation answers in the chat, not on the call.
+          onInterrupted: () => emit({ type: "error" }),
+        },
+      })
+    } catch (err) {
+      console.error("Voice turn failed", err)
+    }
+    // An aborted turn calls neither onDone nor onError.
+    emit({ type: turn.abort.signal.aborted ? "aborted" : "error" })
+    if (this.#voiceTurn === turn) this.#voiceTurn = null
+    const spoken = this.#spoken.get(frame.turnId)
+    if (spoken !== undefined) {
+      this.#spoken.delete(frame.turnId)
+      await this.recordSpoken(callId, frame.turnId, spoken)
+    }
+    if (!this.#voiceTurn) this.flushSays(callId)
+  }
+
+  /** Note on the reply what the user actually heard before talking over it. */
+  private async recordSpoken(callId: string, turnId: string, spoken: string) {
+    const messages = this.messages
+    const at = messages.findIndex((m) => m.id === `voice:${callId}:${turnId}`)
+    const reply = at === -1 ? undefined : messages[at + 1]
+    if (reply?.role !== "assistant") return
+    const updated: UIMessage = {
+      ...reply,
+      metadata: { ...metaOf(reply), voice: { spoken } } satisfies MessageMeta,
+    }
+    try {
+      await this.updateMessageInHistory(updated)
+      this.broadcast(
+        JSON.stringify({
+          type: CHAT_MESSAGE_TYPES.MESSAGE_UPDATED,
+          message: updated,
+        })
+      )
+    } catch (err) {
+      console.error("Recording what was heard failed", err)
+    }
+  }
+
+  /** Speak without a user turn, once nothing else is being said. */
+  private sayOnCall(spoken: string, reason: "task_result" | "notice") {
+    const callId = this.state.voice?.callId
+    if (!callId || !spoken) return
+    this.#heldSays.push({
+      type: "say",
+      sayId: crypto.randomUUID(),
+      text: spoken,
+      reason,
+    })
+    if (!this.#voiceTurn) this.flushSays(callId)
+  }
+
+  private flushSays(callId: string) {
+    const held = this.#heldSays
+    this.#heldSays = []
+    for (const frame of held) this.sendVoice(callId, frame)
+  }
+
+  private async endVoiceCall(callId: string, reason: string) {
+    this.sql`UPDATE voice_calls SET ended_at = ${Date.now()},
+      end_reason = ${reason} WHERE id = ${callId} AND ended_at IS NULL`
+    this.ctx.storage.kv.delete(`voice_ping:${callId}`)
+    if (this.#voiceTurn?.callId === callId) this.#voiceTurn.abort.abort()
+    if (this.state.voice?.callId === callId) {
+      this.#heldSays = []
+      this.setState({ ...this.state, voice: null })
+    }
+    for (const connection of this.getConnections(VOICE_TAG)) {
+      if (voiceCallOf(connection) === callId) {
+        connection.close(1000, "Call ended")
+      }
+    }
+  }
+
+  /** Schedule callback while a call is on: end it once the agent goes quiet. */
+  async voiceWatchdog() {
+    const callId = this.state.voice?.callId
+    if (!callId) return
+    const lastPing =
+      this.ctx.storage.kv.get<number>(`voice_ping:${callId}`) ?? 0
+    if (Date.now() - lastPing > VOICE_IDLE_MS) {
+      await this.endVoiceCall(callId, "timeout")
+      return
+    }
+    await this.schedule(VOICE_WATCHDOG_S, "voiceWatchdog")
+  }
+
+  @callable()
+  async hangUpVoiceCall(callId: string) {
+    await this.endVoiceCall(callId, "hung_up")
+  }
+
   // ── Messages that do not come from the human ────────────────────────
 
   private async submitAs(
@@ -4021,6 +4449,7 @@ export class BotAgent extends Think<Env, BotState> {
       routine?: MessageMeta["routine"]
       task?: BotTask
       taskResult?: MessageMeta["taskResult"]
+      channel?: "voice"
     } = {}
   ) {
     const metadata: MessageMeta = {
@@ -4035,6 +4464,7 @@ export class BotAgent extends Think<Env, BotState> {
     await this.runTurn({
       mode: "submit",
       idempotencyKey: options.key,
+      channel: options.channel,
       input: {
         id: crypto.randomUUID(),
         role: "user",
@@ -4136,6 +4566,11 @@ export class BotAgent extends Think<Env, BotState> {
           : "Nothing came up since the user asked. Give the result directly."
       )
     }
+    if (this.state.voice) {
+      lines.push(
+        "The user is on a voice call. Open with one or two sentences that answer it in plain speech; they are read aloud. Any table, list or link goes after them, for the chat."
+      )
+    }
     if (outcome.status !== "done") {
       lines.push(
         `It did not finish (${outcome.status}${outcome.error ? `: ${outcome.error}` : ""}).`
@@ -4164,6 +4599,8 @@ export class BotAgent extends Think<Env, BotState> {
       hops: row?.hops,
       background: row?.background === 1,
       taskResult: { taskId },
+      // Said out loud when the user is still on a call.
+      ...(this.state.voice ? { channel: "voice" as const } : {}),
     })
   }
 

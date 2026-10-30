@@ -352,6 +352,8 @@ export interface MessageMeta {
   task?: BotTask
   /** On a message carrying another bot's result for a task this bot handed out. */
   taskResult?: { taskId: string }
+  /** The Think channel a turn ran on, stamped on its user message. */
+  channel?: string
   /** Said out loud on a voice call. */
   via?: "voice"
   callId?: string

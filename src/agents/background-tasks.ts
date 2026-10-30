@@ -75,6 +75,19 @@ export const HELPER_EXCLUDED_TOOLS: ReadonlySet<string> = new Set([
   "was_reported",
 ])
 
+/**
+ * Tools a voice call does not get: each one puts a card on the screen
+ * (a choice, a masked secret field, the browser handed over, a recording)
+ * that the user on a call may not be looking at.
+ */
+export const VOICE_EXCLUDED_TOOLS: ReadonlySet<string> = new Set([
+  "ask_user",
+  "request_secret",
+  "request_handoff",
+  "start_teaching",
+  "finish_teaching",
+])
+
 /** A correction the user added to a running task (update_task). */
 export interface TaskNote {
   /** The update_task call it came from, so a re-delivery is not added twice. */

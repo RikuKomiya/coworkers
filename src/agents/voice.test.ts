@@ -7,6 +7,7 @@ import {
   nextVoiceView,
   parseAgentFrame,
   signVoiceLink,
+  spokenLead,
   speakable,
   toVoiceFrames,
   verifyVoiceLink,
@@ -127,6 +128,25 @@ describe("toVoiceFrames", () => {
         status: "handed_off",
         taskIds: [backgroundTaskId("call_1")],
       },
+    ])
+  })
+
+  it("does not say the acknowledgment twice when the model also wrote it", () => {
+    const frames = run([
+      delta("On it."),
+      {
+        type: "chunk",
+        chunk: {
+          type: "tool-input-available",
+          toolCallId: "call_1",
+          toolName: "start_task",
+          input: { title: "x", task: "y", reply: "On it, one minute." },
+        },
+      },
+      { type: "done" },
+    ])
+    expect(frames.filter((f) => f.type === "delta")).toEqual([
+      { type: "delta", turnId: "t1", text: "On it." },
     ])
   })
 
@@ -288,5 +308,30 @@ describe("voice link tokens", () => {
     expect(voicePath("/voice/u1")).toBeNull()
     expect(voicePath("/voice/u1/b1/x")).toBeNull()
     expect(voicePath("/agents/u1/b1")).toBeNull()
+  })
+})
+
+describe("spokenLead", () => {
+  it("says the opening sentences and leaves tables and lists to the chat", () => {
+    const result = [
+      "Here are the **three** tallest buildings. Burj Khalifa leads by far. Merdeka is second.",
+      "",
+      "| Building | Height |",
+      "| --- | ---: |",
+      "| [Burj Khalifa](https://x.y) | 828 m |",
+    ].join("\n")
+    expect(spokenLead(result)).toBe(
+      "Here are the three tallest buildings. Burj Khalifa leads by far."
+    )
+  })
+
+  it("keeps Japanese sentence breaks", () => {
+    expect(spokenLead("終わりました。三件あります。詳細はチャットに。")).toBe(
+      "終わりました。三件あります。"
+    )
+  })
+
+  it("says nothing for a reply that is only a list", () => {
+    expect(spokenLead("- a\n- b")).toBe("")
   })
 })

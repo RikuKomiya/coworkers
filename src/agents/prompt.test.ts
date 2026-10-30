@@ -2,7 +2,13 @@ import type { ModelMessage } from "ai"
 import { describe, expect, it } from "vitest"
 import { DEFAULT_PROACTIVE, DEFAULT_RULES } from "@/lib/types"
 import type { BotState, BotTask } from "@/lib/types"
-import { helperBrief, scriptPrompt, turnContext, withSentTimes } from "./prompt"
+import {
+  VOICE_INSTRUCTIONS,
+  helperBrief,
+  scriptPrompt,
+  turnContext,
+  withSentTimes,
+} from "./prompt"
 
 const AT = Date.UTC(2026, 9, 26, 5, 41)
 
@@ -156,5 +162,19 @@ describe("helperBrief", () => {
     expect(
       helperBrief({ title: "P", conversation, memory: "  " })
     ).not.toContain("memory")
+  })
+})
+
+describe("VOICE_INSTRUCTIONS", () => {
+  it("keeps spoken replies short, plain and spoken-number, and sends slow or visual work elsewhere", () => {
+    expect(VOICE_INSTRUCTIONS).toContain("one or two short spoken sentences")
+    expect(VOICE_INSTRUCTIONS).toMatch(
+      /no Markdown.*no tables, no URLs, no code/
+    )
+    expect(VOICE_INSTRUCTIONS).toMatch(/numbers.*in words/)
+    expect(VOICE_INSTRUCTIONS).toMatch(
+      /more than a few seconds goes to start_task/
+    )
+    expect(VOICE_INSTRUCTIONS).toMatch(/put it in the chat/)
   })
 })
