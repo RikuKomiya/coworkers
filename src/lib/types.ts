@@ -267,6 +267,18 @@ export interface BotState {
   scriptApprovals?: ScriptApproval[]
   /** Background tasks (start_task) still running, oldest first. */
   tasks?: BackgroundTask[]
+  /** The live voice call, if one is on. */
+  voice?: VoiceView | null
+}
+
+export type VoiceStatus = "listening" | "thinking" | "speaking"
+
+/** What the call bar shows while a voice call is on. */
+export interface VoiceView {
+  callId: string
+  status: VoiceStatus
+  /** What the user is saying right now, before the turn ends. */
+  partial: string
 }
 
 /** Work the bot handed to a helper of its own, so the chat stays free. */
@@ -340,6 +352,11 @@ export interface MessageMeta {
   task?: BotTask
   /** On a message carrying another bot's result for a task this bot handed out. */
   taskResult?: { taskId: string }
+  /** Said out loud on a voice call. */
+  via?: "voice"
+  callId?: string
+  /** On a reply cut off by the user talking over it: what they heard. */
+  voice?: { spoken: string }
 }
 
 /** Where a task's result goes when the bot working on it finishes. */
