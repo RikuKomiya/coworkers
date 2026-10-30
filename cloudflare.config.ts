@@ -116,6 +116,13 @@ export default defineConfig({
       VAPID_PUBLIC_KEY: bindings.secret(),
       VAPID_PRIVATE_KEY: bindings.secret(),
       VAPID_SUBJECT: bindings.text("mailto:bots@example.com"),
+      // Voice calls through LiveKit (voice-agent/). The call button stays
+      // hidden until all four are set. VOICE_LINK_SECRET signs the token
+      // the LiveKit agent uses to reach one bot: any long random string.
+      LIVEKIT_URL: bindings.secret(),
+      LIVEKIT_API_KEY: bindings.secret(),
+      LIVEKIT_API_SECRET: bindings.secret(),
+      VOICE_LINK_SECRET: bindings.secret(),
     },
   },
 })

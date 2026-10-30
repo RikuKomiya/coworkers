@@ -11,6 +11,8 @@ import {
   Attachment01Icon as Attachment,
   BookOpen01Icon as BookOpen,
   BotIcon as Bot,
+  Call02Icon as Call,
+  CallEnd01Icon as CallEnd,
   Cancel01Icon as Cancel,
   Clock01Icon as Clock,
   ComputerTerminal01Icon as Terminal,
@@ -32,6 +34,7 @@ import {
   LeftToRightListBulletIcon as ListBullet,
   LinkSquare02Icon as LinkSquare,
   Mail01Icon as Mail,
+  Mic01Icon as Mic,
   Notification01Icon as Notification,
   Notification03Icon as NotificationRinging,
   NotificationOff01Icon as NotificationOff,
@@ -44,6 +47,7 @@ import {
   Settings03Icon as Settings,
   PanelLeft as SidebarLeft,
   StopIcon as Stop,
+  Task01Icon as Task,
   TeachingIcon as Teaching,
   Tick02Icon as Tick,
   ViewIcon as View,
@@ -91,6 +95,8 @@ export const BellRingingIcon = icon(NotificationRinging, "BellRingingIcon")
 export const BellSlashIcon = icon(NotificationOff, "BellSlashIcon")
 export const BrainIcon = icon(Brain, "BrainIcon")
 export const CalendarIcon = icon(Calendar, "CalendarIcon")
+export const CallEndIcon = icon(CallEnd, "CallEndIcon")
+export const CallIcon = icon(Call, "CallIcon")
 export const BotIcon = icon(Bot, "BotIcon")
 export const BookOpenTextIcon = icon(BookOpen, "BookOpenTextIcon")
 export const CaretDownIcon = icon(ChevronDown, "CaretDownIcon")
@@ -113,6 +119,7 @@ export const ImageIcon = icon(Image, "ImageIcon")
 export const LockIcon = icon(Lock, "LockIcon")
 export const ListBulletsIcon = icon(ListBullet, "ListBulletsIcon")
 export const MessageIcon = icon(Message, "MessageIcon")
+export const MicIcon = icon(Mic, "MicIcon")
 export const MagnifyingGlassIcon = icon(Search, "MagnifyingGlassIcon")
 export const SearchListIcon = icon(SearchList, "SearchListIcon")
 export const ComputerIcon = icon(AiBrowser, "ComputerIcon")
@@ -124,6 +131,7 @@ export const PlusIcon = icon(Add, "PlusIcon")
 export const PowerIcon = icon(Power, "PowerIcon")
 export const SidebarSimpleIcon = icon(SidebarLeft, "SidebarSimpleIcon")
 export const StopIcon = icon(Stop, "StopIcon")
+export const TaskIcon = icon(Task, "TaskIcon")
 export const TerminalIcon = icon(Terminal, "TerminalIcon")
 export const TrashIcon = icon(Delete, "TrashIcon")
 export const WarningIcon = icon(Alert, "WarningIcon")

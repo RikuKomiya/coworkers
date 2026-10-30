@@ -265,6 +265,31 @@ export interface BotState {
   lastCheckIn?: number
   /** App calls from the bot's scripts, paused until the user answers. */
   scriptApprovals?: ScriptApproval[]
+  /** Background tasks (start_task) still running, oldest first. */
+  tasks?: BackgroundTask[]
+  /** The live voice call, if one is on. */
+  voice?: VoiceView | null
+}
+
+export type VoiceStatus = "listening" | "thinking" | "speaking"
+
+/** What the call bar shows while a voice call is on. */
+export interface VoiceView {
+  callId: string
+  status: VoiceStatus
+  /** What the user is saying right now, before the turn ends. */
+  partial: string
+}
+
+/** Work the bot handed to a helper of its own, so the chat stays free. */
+export interface BackgroundTask {
+  id: string
+  /** Short label the user sees, in their language. */
+  title: string
+  /** Unix ms. */
+  startedAt: number
+  /** Latest thing the helper did, e.g. "Scraped amazon.co.jp". */
+  step?: string
 }
 
 /**
@@ -304,7 +329,8 @@ export interface MessageOrigin {
     | "crawl"
     | "pipeline"
     | "script"
-  /** Bot, routine or pipeline name, email sender, webhook source, app name, crawled host, or what a script was for. */
+    | "task"
+  /** Bot, routine or pipeline name, email sender, webhook source, app name, crawled host, what a script was for, or a background task's title. */
   name: string
   avatar?: BotAvatarKind
 }
@@ -326,12 +352,21 @@ export interface MessageMeta {
   task?: BotTask
   /** On a message carrying another bot's result for a task this bot handed out. */
   taskResult?: { taskId: string }
+  /** The Think channel a turn ran on, stamped on its user message. */
+  channel?: string
+  /** Said out loud on a voice call. */
+  via?: "voice"
+  callId?: string
+  /** On a reply cut off by the user talking over it: what they heard. */
+  voice?: { spoken: string }
 }
 
 /** Where a task's result goes when the bot working on it finishes. */
 export type TaskReplyTo =
   | { kind: "bot"; botId: string }
   | { kind: "pipeline"; runId: string; step: number }
+  /** A background task (start_task): the helper reports to the bot that started it. */
+  | { kind: "parent"; botId: string }
 
 /** Work handed to a bot whose final reply is sent back to whoever asked. */
 export interface BotTask {

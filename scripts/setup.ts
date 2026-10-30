@@ -245,7 +245,9 @@ async function main() {
   account ??= await choose("Account", accounts, (a) => a.name)
   console.log(`  Account: ${account.name}`)
 
-  const name = (await ask("Worker name", saved.name ?? "coworkers")).toLowerCase()
+  const name = (
+    await ask("Worker name", saved.name ?? "coworkers")
+  ).toLowerCase()
   const emails = (
     await ask(
       "Who can sign in (comma separated)",
@@ -413,6 +415,7 @@ async function main() {
     destinations: [
       { type: "public", uri: `${host}/apps` },
       { type: "public", uri: `${host}/api/hooks` },
+      { type: "public", uri: `${host}/voice` },
     ],
     policies: [bypass.id],
     app_launcher_visible: false,

@@ -1,6 +1,14 @@
 import type { ModelMessage } from "ai"
 import { describe, expect, it } from "vitest"
-import { scriptPrompt, withSentTimes } from "./prompt"
+import { DEFAULT_PROACTIVE, DEFAULT_RULES } from "@/lib/types"
+import type { BotState, BotTask } from "@/lib/types"
+import {
+  VOICE_INSTRUCTIONS,
+  helperBrief,
+  scriptPrompt,
+  turnContext,
+  withSentTimes,
+} from "./prompt"
 
 const AT = Date.UTC(2026, 9, 26, 5, 41)
 
@@ -79,5 +87,94 @@ describe("scriptPrompt", () => {
     expect(text).toContain("did not finish: it stopped responding")
     expect(text).toContain("check their effects")
     expect(text).toContain("background turn")
+  })
+})
+
+describe("turnContext tasks", () => {
+  const state: BotState = {
+    name: "Shopper",
+    avatar: "blue-rectangle",
+    role: "",
+    status: "idle",
+    rules: DEFAULT_RULES,
+    routines: [],
+    proactive: DEFAULT_PROACTIVE,
+    skills: [],
+    apps: [],
+  }
+  const context = (extra: {
+    task?: BotTask
+    backgroundTasks?: { id: string; title: string; task: string; at: number }[]
+  }) =>
+    turnContext(state, [], [], {
+      openItems: [],
+      delegations: [],
+      backgroundTasks: extra.backgroundTasks ?? [],
+      task: extra.task,
+      inbound: { email: null, webhookUrl: "" },
+      sharedMemory: "",
+      builtApps: [],
+    })
+
+  it("tells a helper that its reply goes back to the main chat", () => {
+    const text = context({
+      task: { id: "bg1", replyTo: { kind: "parent", botId: "b1" } },
+    })
+    expect(text).toContain("background helper")
+    expect(text).toContain("handed back to the main chat")
+    expect(text).toContain('"Ask first" are blocked')
+    expect(text).not.toContain("Another bot gave you this task")
+  })
+
+  it("lists running tasks with the id update_task and cancel_task take", () => {
+    const text = context({
+      backgroundTasks: [
+        { id: "bgabc", title: "Protein prices", task: "Compare", at: AT },
+      ],
+    })
+    expect(text).toContain("# Tasks running in the background")
+    expect(text).toContain("- [bgabc] Protein prices")
+    expect(text).not.toContain("# Tasks you handed out")
+  })
+})
+
+describe("helperBrief", () => {
+  const conversation = [
+    { role: "user" as const, text: "プロテインの価格比較して" },
+    { role: "assistant" as const, text: "おけー、やっとく！" },
+    { role: "user" as const, text: "国産だけで" },
+  ]
+
+  it("gives the helper the conversation and the user's memory", () => {
+    const text = helperBrief({
+      title: "プロテインの価格比較",
+      conversation,
+      memory: "- Lives in Japan",
+    })
+    expect(text.split("\n")[0]).toBe("[Background task: プロテインの価格比較]")
+    expect(text).toContain(
+      "User: プロテインの価格比較して\nYou: おけー、やっとく！\nUser: 国産だけで"
+    )
+    expect(text).toContain("- Lives in Japan")
+  })
+
+  it("leaves out an empty memory", () => {
+    expect(
+      helperBrief({ title: "P", conversation, memory: "  " })
+    ).not.toContain("memory")
+  })
+})
+
+describe("VOICE_INSTRUCTIONS", () => {
+  it("keeps spoken replies short, plain and spoken-number, and sends slow or visual work elsewhere", () => {
+    expect(VOICE_INSTRUCTIONS).toContain("one or two short spoken sentences")
+    expect(VOICE_INSTRUCTIONS).toMatch(
+      /no Markdown.*no tables, no URLs, no code/
+    )
+    expect(VOICE_INSTRUCTIONS).toMatch(/numbers.*in words/)
+    expect(VOICE_INSTRUCTIONS).toMatch(
+      /more than a few seconds goes to start_task/
+    )
+    expect(VOICE_INSTRUCTIONS).toMatch(/put it in the chat/)
   })
 })

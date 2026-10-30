@@ -197,7 +197,8 @@ then does what the installer does with the `cf` CLI:
 2. deploys once with Access required but not yet set up, so the new URL
    refuses every request instead of being open
 3. sets up Cloudflare Access: your allow list, plus a bypass for shared app
-   links (`/apps`) and webhooks (`/api/hooks`), which carry their own tokens
+   links (`/apps`), webhooks (`/api/hooks`) and voice calls (`/voice`),
+   which carry their own tokens
 4. deploys again with the Access application's AUD
 
 Your choices go in `coworkers.deploy.json` and secrets in `.dev.vars.production`.
@@ -256,7 +257,8 @@ Note the `https://<name>.<subdomain>.workers.dev` URL it prints. It answers
    Coworkers host, no path, with the Allow policy. Use a public hostname, not a
    Worker destination: Worker destinations refuse WebSocket upgrades.
 4. **Add a second self-hosted application:** your host with path `apps`, and
-   your host with path `api/hooks`, with the Bypass policy.
+   your host with path `api/hooks`, and your host with path `voice` (voice
+   calls), with the Bypass policy.
 5. Copy the first application's **Application Audience (AUD) Tag** from its
    overview. Your team domain is on Zero Trust's **Settings** page.
 

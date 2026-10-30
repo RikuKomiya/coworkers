@@ -10,3 +10,11 @@ VAPID_PRIVATE_KEY=""
 # Optional: Browser Run API token (permission "Browser Rendering - Edit") for
 # the bot's crawl tool. Also set BROWSER_RUN_ACCOUNT_ID in cloudflare.config.ts.
 BROWSER_RUN_API_TOKEN=""
+
+# Optional: voice calls through LiveKit (see voice-agent/README.md).
+# LIVEKIT_URL is the project URL, e.g. wss://<project>.livekit.cloud.
+# VOICE_LINK_SECRET: any long random string, e.g. `openssl rand -hex 32`.
+LIVEKIT_URL=""
+LIVEKIT_API_KEY=""
+LIVEKIT_API_SECRET=""
+VOICE_LINK_SECRET=""
