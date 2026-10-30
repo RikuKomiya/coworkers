@@ -3,7 +3,14 @@ import { getAgentByName, routeAgentEmail, routeAgentRequest } from "agents"
 import { Unauthorized, identify } from "@/lib/auth"
 import { botInstanceName } from "@/lib/types"
 import { handleAppRequest } from "./agents/apps-runtime"
+import type { BotAgent } from "./agents/bot-agent"
 import type { UserHub } from "./agents/user-hub"
+import {
+  VOICE_CALL_HEADER,
+  linkMatches,
+  verifyVoiceLink,
+  voicePath,
+} from "./agents/voice"
 
 // Durable Objects and the classes their runtimes load by name.
 export { BotAgent, WorkspaceServiceProxy } from "./agents/bot-agent"
@@ -20,6 +27,34 @@ function agentInstance(pathname: string) {
   return { agent, instance: decodeURIComponent(instance) }
 }
 
+/**
+ * `/voice/<userId>/<botId>`: the LiveKit agent's socket to one bot. It has
+ * no cookie; the link token minted by `startVoiceCall` is its credential,
+ * and the call it names is passed on in a header only this code sets.
+ */
+async function handleVoiceRequest(request: Request, env: Env) {
+  const path = voicePath(new URL(request.url).pathname)
+  if (!path) return null
+  const secret = env.VOICE_LINK_SECRET?.trim()
+  const token =
+    request.headers.get("Authorization")?.replace(/^Bearer\s+/i, "") ??
+    new URL(request.url).searchParams.get("token")
+  const link = secret && token ? await verifyVoiceLink(token, secret) : null
+  if (!link || !linkMatches(link, path)) {
+    return new Response("Unauthorized", { status: 401 })
+  }
+  if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
+    return new Response("Expected a WebSocket", { status: 426 })
+  }
+  const bot = await getAgentByName(
+    env.BotAgent as unknown as DurableObjectNamespace<BotAgent>,
+    botInstanceName(link.userId, link.botId)
+  )
+  const headers = new Headers(request.headers)
+  headers.set(VOICE_CALL_HEADER, link.callId)
+  return bot.fetch(new Request(request, { headers }))
+}
+
 /** A user may only reach their own hub and their own bots. */
 function ownsInstance(userId: string, agent: string, instance: string) {
   if (agent === "user-hub") return instance === userId
@@ -32,6 +67,8 @@ export default {
     // Apps authenticate by the link token in their URL, not the user.
     const app = await handleAppRequest(request, env)
     if (app) return app
+    const voice = await handleVoiceRequest(request, env)
+    if (voice) return voice
 
     const target = agentInstance(new URL(request.url).pathname)
     if (target) {
@@ -47,8 +84,14 @@ export default {
       if (!ownsInstance(userId, target.agent, target.instance)) {
         return new Response("Forbidden", { status: 403 })
       }
+      // Only a verified /voice/* upgrade may mark a socket as a call.
+      const headers = new Headers(request.headers)
+      headers.delete(VOICE_CALL_HEADER)
       // Agent WebSockets and agent HTTP (MCP OAuth callbacks).
-      const response = await routeAgentRequest(request, env)
+      const response = await routeAgentRequest(
+        new Request(request, { headers }),
+        env
+      )
       if (response) return response
     }
     return handler.fetch(request)

@@ -417,6 +417,7 @@ export class Installer extends Agent<Env, InstallerState> {
       destinations: [
         { type: "public", uri: `${host}/apps` },
         { type: "public", uri: `${host}/api/hooks` },
+        { type: "public", uri: `${host}/voice` },
       ],
       policies: [bypass.id],
       app_launcher_visible: false,
